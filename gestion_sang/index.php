@@ -1,0 +1,543 @@
+<?php
+session_start();
+require_once 'config/db.php';
+
+$erreur = "";
+// Type d'identifiant actif (NNI par défaut, conforme au document pi.docx)
+$type_actif = $_POST['type_identifiant'] ?? 'nni';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
+
+    $identifiant  = trim($_POST['identifiant']);
+    $mot_de_passe = $_POST['mot_de_passe'];
+
+    if (empty($identifiant) || empty($mot_de_passe)) {
+        $erreur = "Veuillez remplir tous les champs.";
+    }
+    else if ($type_actif === 'nni') {
+        // ══ Connexion DONNEUR (par NNI) ══
+        $stmt = $pdo->prepare("SELECT * FROM donneur WHERE NNI = ?");
+        $stmt->execute([$identifiant]);
+        $donneur = $stmt->fetch();
+        if ($donneur && password_verify($mot_de_passe, $donneur['mot_de_passe'])) {
+            $_SESSION['role'] = 'donneur';
+            $_SESSION['id']   = $donneur['id_donneur'];
+            $_SESSION['NNI']  = $donneur['NNI'];
+            header("Location: donneur/dashboard.php");
+            exit;
+        }
+        $erreur = "NNI ou mot de passe incorrect.";
+    }
+    else {
+        // ══ Connexion par EMAIL — Admin / Banque / Sous-banque / Hôpital ══
+
+        // 1. Administrateur
+        $stmt = $pdo->prepare("SELECT * FROM administrateur WHERE email = ?");
+        $stmt->execute([$identifiant]);
+        $admin = $stmt->fetch();
+        if ($admin && password_verify($mot_de_passe, $admin['mot_de_passe'])) {
+            $_SESSION['role']   = 'admin';
+            $_SESSION['id']     = $admin['id_admin'];
+            $_SESSION['email']  = $admin['email'];
+            // nom / prenom : à activer après ajout des colonnes (étape SQL)
+            $_SESSION['nom']    = $admin['nom']    ?? null;
+            $_SESSION['prenom'] = $admin['prenom'] ?? null;
+            header("Location: admin/dashboard.php");
+            exit;
+        }
+
+        // 2. Banque de sang
+        $stmt = $pdo->prepare("SELECT * FROM banque_de_sang WHERE email = ?");
+        $stmt->execute([$identifiant]);
+        $banque = $stmt->fetch();
+        if ($banque && password_verify($mot_de_passe, $banque['mot_de_passe'])) {
+            $_SESSION['role']  = 'banque';
+            $_SESSION['id']    = $banque['id_banque'];
+            $_SESSION['nom']   = $banque['nom'];
+            $_SESSION['email'] = $banque['email'];
+            header("Location: banque/dashboard.php");
+            exit;
+        }
+
+        // 3. Sous-banque (NOUVEAU)
+        $stmt = $pdo->prepare("SELECT * FROM sous_banque WHERE email = ?");
+        $stmt->execute([$identifiant]);
+        $sous_banque = $stmt->fetch();
+        if ($sous_banque && password_verify($mot_de_passe, $sous_banque['mot_de_passe'])) {
+            $_SESSION['role']       = 'sous_banque';
+            $_SESSION['id']         = $sous_banque['id_sous_banque'];
+            $_SESSION['nom']        = $sous_banque['nom'];
+            $_SESSION['email']      = $sous_banque['email'];
+            $_SESSION['id_hopital'] = $sous_banque['id_hopital'];
+            header("Location: sous_banque/dashboard.php");
+            exit;
+        }
+
+        // 4. Hôpital
+        $stmt = $pdo->prepare("SELECT * FROM hopital WHERE email = ?");
+        $stmt->execute([$identifiant]);
+        $hopital = $stmt->fetch();
+        if ($hopital && password_verify($mot_de_passe, $hopital['mot_de_passe'])) {
+            $_SESSION['role']  = 'hopital';
+            $_SESSION['id']    = $hopital['id_hopital'];
+            $_SESSION['nom']   = $hopital['nom'];
+            $_SESSION['email'] = $hopital['email'];
+            header("Location: hopital/dashboard.php");
+            exit;
+        }
+
+        $erreur = "Email ou mot de passe incorrect.";
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connexion — E-Sang</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background: #FFFFFF;
+            color: #111111;
+            min-height: 100vh;
+            display: flex;
+        }
+
+        /* ══════════════════════════════════════
+           CÔTÉ GAUCHE — BRANDING
+           ══════════════════════════════════════ */
+        .left-side {
+            flex: 1;
+            background: #FFFFFF;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 60px 80px;
+            border-right: 2px solid #E5E7EB;
+            box-shadow: 4px 0 16px -8px rgba(0, 0, 0, 0.08);
+            z-index: 2;
+        }
+
+        .brand-logo {
+            margin-bottom: 32px;
+        }
+
+        .brand-name {
+            font-size: 72px;
+            font-weight: 900;
+            color: #111111;
+            letter-spacing: -3px;
+            margin-bottom: 24px;
+            line-height: 1;
+        }
+
+        .brand-name .accent {
+            color: #8B0000;
+        }
+
+        .brand-tagline {
+            font-size: 22px;
+            font-weight: 700;
+            color: #111111;
+            margin-bottom: 6px;
+        }
+
+        .brand-tagline-red {
+            font-size: 22px;
+            font-weight: 700;
+            color: #8B0000;
+            margin-bottom: 48px;
+        }
+
+        .brand-cards {
+            display: flex;
+            gap: 32px;
+            margin-top: 20px;
+        }
+
+        .brand-card {
+            flex: 1;
+            max-width: 200px;
+        }
+
+        .brand-card h3 {
+            font-size: 22px;
+            font-weight: 800;
+            color: #111111;
+            margin-bottom: 6px;
+            line-height: 1.15;
+        }
+
+        .brand-card p {
+            font-size: 14px;
+            color: #444444;
+            font-weight: 500;
+            line-height: 1.4;
+        }
+
+        /* ══════════════════════════════════════
+           CÔTÉ DROIT — FORMULAIRE
+           ══════════════════════════════════════ */
+        .right-side {
+            width: 580px;
+            flex-shrink: 0;
+            background: #FAFAFA;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 50px 60px;
+        }
+
+        .form-card {
+            width: 100%;
+            max-width: 460px;
+        }
+
+        .form-title {
+            font-size: 38px;
+            font-weight: 900;
+            color: #111111;
+            margin-bottom: 10px;
+            letter-spacing: -1px;
+        }
+
+        .form-subtitle {
+            font-size: 16px;
+            color: #555555;
+            margin-bottom: 32px;
+            font-weight: 500;
+        }
+
+        /* ══ ALERTE ERREUR ══ */
+        .alerte-erreur {
+            background: #FEF2F2;
+            border: 2px solid #FCA5A5;
+            color: #8B0000;
+            border-radius: 12px;
+            padding: 14px 18px;
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* ══ BOX FORMULAIRE ══ */
+        .form-box {
+            background: #FFF5F5;
+            border: 1.5px solid #FCA5A5;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+
+        /* ══ TOGGLE NNI / EMAIL ══ */
+        .toggle-type {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            background: #FFFFFF;
+            border-radius: 12px;
+            padding: 5px;
+            margin-bottom: 22px;
+            border: 1.5px solid #E5E7EB;
+        }
+
+        .toggle-btn {
+            padding: 12px;
+            border-radius: 9px;
+            border: none;
+            background: transparent;
+            color: #6B7280;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .toggle-btn:hover { color: #8B0000; }
+
+        .toggle-btn.active {
+            background: #8B0000;
+            color: #FFFFFF;
+            box-shadow: 0 4px 12px rgba(139, 0, 0, 0.25);
+        }
+
+        /* ══ CHAMPS ══ */
+        .form-group {
+            margin-bottom: 18px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 15px;
+            font-weight: 700;
+            color: #111111;
+            margin-bottom: 8px;
+        }
+
+        .form-label .req {
+            color: #8B0000;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 14px 18px;
+            border: 1.5px solid #E5E7EB;
+            border-radius: 12px;
+            font-size: 16px;
+            font-family: inherit;
+            background: #FFFFFF;
+            color: #111111;
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        .form-input::placeholder { color: #9CA3AF; }
+
+        .form-input:focus {
+            border-color: #8B0000;
+            box-shadow: 0 0 0 4px rgba(139, 0, 0, 0.08);
+        }
+
+        /* ══ MOT DE PASSE AVEC TOGGLE ══ */
+        .password-wrapper {
+            position: relative;
+        }
+
+        .password-wrapper .form-input {
+            padding-right: 50px;
+        }
+
+        .toggle-password {
+            position: absolute;
+            right: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: #9CA3AF;
+            cursor: pointer;
+            font-size: 18px;
+            padding: 4px;
+        }
+
+        .toggle-password:hover { color: #8B0000; }
+
+        /* ══ BOUTON CONNEXION ══ */
+        .btn-connexion {
+            width: 100%;
+            padding: 16px;
+            background: #8B0000;
+            color: #FFFFFF;
+            border: none;
+            border-radius: 12px;
+            font-size: 17px;
+            font-weight: 800;
+            cursor: pointer;
+            font-family: inherit;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            box-shadow: 0 6px 20px rgba(139, 0, 0, 0.28);
+            margin-top: 6px;
+        }
+
+        .btn-connexion:hover {
+            background: #6B0000;
+            transform: translateY(-1px);
+            box-shadow: 0 8px 22px rgba(139, 0, 0, 0.35);
+        }
+
+        /* ══ LIEN INSCRIPTION ══ */
+        .lien-inscription {
+            text-align: center;
+            font-size: 15px;
+            color: #555555;
+            margin-top: 20px;
+            font-weight: 500;
+        }
+
+        .lien-inscription a {
+            color: #8B0000;
+            text-decoration: none;
+            font-weight: 800;
+        }
+        .lien-inscription a:hover { text-decoration: underline; }
+
+        /* ══ RESPONSIVE ══ */
+        @media (max-width: 1024px) {
+            body { flex-direction: column; }
+            .left-side {
+                padding: 40px;
+                border-right: none;
+                border-bottom: 1px solid #F3F4F6;
+                text-align: center;
+                align-items: center;
+            }
+            .right-side { width: 100%; padding: 40px 24px; }
+            .brand-name { font-size: 52px; }
+            .form-title { font-size: 30px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════
+     CÔTÉ GAUCHE — BRANDING
+     ══════════════════════════════════════ -->
+<div class="left-side">
+
+    <!-- Logo goutte avec croix médicale -->
+    <div class="brand-logo">
+        <svg width="72" height="92" viewBox="0 0 72 92" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- Goutte -->
+            <path d="M36 90C53.673 90 68 75.673 68 58C68 43 56 26 36 4C16 26 4 43 4 58C4 75.673 18.327 90 36 90Z"
+                  fill="#8B0000"/>
+            <!-- Croix blanche -->
+            <rect x="30" y="40" width="12" height="36" rx="3" fill="white"/>
+            <rect x="18" y="52" width="36" height="12" rx="3" fill="white"/>
+        </svg>
+    </div>
+
+    <h1 class="brand-name">E<span class="accent">-</span>Sang</h1>
+
+    <p class="brand-tagline">Chaque don compte.</p>
+    <p class="brand-tagline-red">Soyez le héros de quelqu'un.</p>
+
+    <div class="brand-cards">
+        <div class="brand-card">
+            <h3>Don de vie</h3>
+            <p>Rejoignez la communauté</p>
+        </div>
+        <div class="brand-card">
+            <h3>Ensemble</h3>
+            <p>Unis pour sauver des vies</p>
+        </div>
+    </div>
+
+</div>
+
+<!-- ══════════════════════════════════════
+     CÔTÉ DROIT — FORMULAIRE
+     ══════════════════════════════════════ -->
+<div class="right-side">
+    <div class="form-card">
+
+        <h2 class="form-title">Connexion</h2>
+        <p class="form-subtitle">Accédez à votre espace E-Sang</p>
+
+        <?php if ($erreur): ?>
+            <div class="alerte-erreur">
+                ⚠️ <?php echo htmlspecialchars($erreur); ?>
+            </div>
+        <?php endif; ?>
+
+        <form method="POST" action="" id="loginForm">
+
+            <input type="hidden" name="type_identifiant" id="type_identifiant" value="<?php echo htmlspecialchars($type_actif); ?>"/>
+
+            <div class="form-box">
+
+                <!-- Toggle NNI / Email — NNI en premier (conforme pi.docx) -->
+                <div class="toggle-type">
+                    <button type="button" class="toggle-btn <?php echo ($type_actif === 'nni') ? 'active' : ''; ?>"
+                            onclick="setType('nni')">
+                        📄 NNI (Donneur)
+                    </button>
+                    <button type="button" class="toggle-btn <?php echo ($type_actif === 'email') ? 'active' : ''; ?>"
+                            onclick="setType('email')">
+                        ✉️ Email
+                    </button>
+                </div>
+
+                <!-- Champ identifiant -->
+                <div class="form-group">
+                    <label class="form-label" id="label_id">
+                        <?php echo ($type_actif === 'nni') ? 'Numéro National d\'Identité (NNI)' : 'Adresse e-mail'; ?>
+                        <span class="req">*</span>
+                    </label>
+                    <input type="text" name="identifiant" id="identifiant" class="form-input"
+                           placeholder="<?php echo ($type_actif === 'nni') ? 'Entrez vos 14 chiffres' : 'exemple@gestion-sang.mr'; ?>"
+                           value="<?php echo htmlspecialchars($_POST['identifiant'] ?? ''); ?>"
+                           autocomplete="off" required/>
+                </div>
+
+                <!-- Mot de passe -->
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label class="form-label">Mot de passe <span class="req">*</span></label>
+                    <div class="password-wrapper">
+                        <input type="password" name="mot_de_passe" id="mot_de_passe" class="form-input"
+                               placeholder="••••••••" required/>
+                        <button type="button" class="toggle-password" onclick="togglePassword()" title="Afficher / masquer">
+                            👁️
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+
+            <button type="submit" class="btn-connexion">
+                Se connecter
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                    <polyline points="12 5 19 12 12 19"/>
+                </svg>
+            </button>
+
+        </form>
+
+        <div class="lien-inscription">
+            Vous êtes donneur et n'avez pas de compte ? <a href="inscription.php">Créer un compte</a>
+        </div>
+
+    </div>
+</div>
+
+<script>
+    function setType(type) {
+        document.getElementById('type_identifiant').value = type;
+
+        // Mettre à jour les boutons toggle
+        document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+        event.target.classList.add('active');
+
+        // Mettre à jour le label + placeholder
+        const label = document.getElementById('label_id');
+        const input = document.getElementById('identifiant');
+
+        if (type === 'nni') {
+            label.innerHTML = "Numéro National d'Identité (NNI) <span class='req'>*</span>";
+            input.placeholder = "Entrez vos 14 chiffres";
+            input.type = "text";
+        } else {
+            label.innerHTML = "Adresse e-mail <span class='req'>*</span>";
+            input.placeholder = "exemple@gestion-sang.mr";
+            input.type = "email";
+        }
+
+        input.value = "";
+        input.focus();
+    }
+
+    function togglePassword() {
+        const input = document.getElementById('mot_de_passe');
+        input.type = input.type === 'password' ? 'text' : 'password';
+    }
+</script>
+
+</body>
+</html>

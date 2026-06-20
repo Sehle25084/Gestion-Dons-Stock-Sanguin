@@ -54,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
             $_SESSION['id']    = $banque['id_banque'];
             $_SESSION['nom']   = $banque['nom'];
             $_SESSION['email'] = $banque['email'];
-            header("Location: banque/banque/dashboard.php");
+            header("Location: banque/dashboard.php");
             exit;
         }
 
@@ -72,7 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
             $_SESSION['email']                = $sous_banque['email'];
             $_SESSION['id_hopital']           = $sous_banque['id_hopital'];
             $_SESSION['id_banque_principale'] = $sous_banque['id_banque_principale'];
-            header("Location: sous_banque/sous_banque/dashboard.php");
+            header("Location: sous_banque/dashboard.php");
             exit;
         }
 

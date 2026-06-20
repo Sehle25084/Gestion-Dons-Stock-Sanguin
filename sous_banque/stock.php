@@ -27,6 +27,21 @@ if (isset($_POST['modifier_seuil'])) {
             $pdo->prepare("INSERT INTO stock_sous_banque (id_sous_banque, id_groupe, quantite_disponible, seuil_alerte, date_mise_a_jour) VALUES (?, ?, 0, ?, CURDATE())")
                 ->execute([$id_sb, $id_groupe, $nouveau_seuil]);
         }
+
+        // Tracer le changement dans l'historique
+        $stmtG = $pdo->prepare("SELECT libelle FROM groupe_sanguin WHERE id_groupe = ?");
+        $stmtG->execute([$id_groupe]);
+        $libelle_groupe = $stmtG->fetchColumn();
+
+        $pdo->prepare("
+            INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, date_action)
+            VALUES (?, ?, 'seuil_modifie', NULL, ?, NOW())
+        ")->execute([
+            $id_sb,
+            $id_groupe,
+            "Seuil d'alerte du groupe {$libelle_groupe} fixé à {$nouveau_seuil} pochette(s)"
+        ]);
+
         $success = "Seuil d'alerte mis à jour avec succès.";
     }
 }
@@ -90,7 +105,7 @@ $nb_ok     = count(array_filter($stocks, fn($s) => (int)$s['quantite'] > (int)$s
 
     <div class="page-header">
         <h1>Stock Interne</h1>
-        <p>Niveaux de réserve par groupe sanguin — Dépôt : <strong><?php echo htmlspecialchars($_SESSION['nom_sb'] ?? $_SESSION['nom'] ?? 'Dépôt'); ?></strong></p>
+        <p>Niveaux de réserve par groupe sanguin — Dépôt : <strong><?php echo htmlspecialchars($_SESSION['nom_sb']); ?></strong></p>
     </div>
 
     <?php if ($success): ?><div class="alerte-success">✅ <?php echo htmlspecialchars($success); ?></div><?php endif; ?>
@@ -126,16 +141,6 @@ $nb_ok     = count(array_filter($stocks, fn($s) => (int)$s['quantite'] > (int)$s
             </div>
             <span class="stat-number" style="<?php echo $nb_ok === count($stocks) ? 'color:#166534;' : ''; ?>"><?php echo $nb_ok; ?></span>
         </div>
-    </div>
-
-    <!-- BOUTON SORTIE -->
-    <div style="display:flex; justify-content:flex-end; margin-bottom:16px;">
-        <a href="sortie.php" class="btn-submit" style="text-decoration:none;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M5 12h14M12 5l7 7-7 7"/>
-            </svg>
-            Enregistrer une sortie médicale
-        </a>
     </div>
 
     <!-- TABLEAU STOCK -->

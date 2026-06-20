@@ -1,300 +1,599 @@
 <?php
 session_start();
-require_once '../config/db.php'; // Connexion à ta base de données
-
-// Sécurité : Vérification du rôle
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'sous_banque') {
-    header("Location: ../index.php");
-    exit;
-}
-
-$id_sous_banque = $_SESSION['id_sous_banque'];
-$id_banque_principale = $_SESSION['id_banque_principale'] ?? 1; // Par défaut 1 si non défini
-$message_success = "";
-$message_erreur = "";
-
-// ══════════════════════════════════════
-// COMMANDE MANUELLE À LA BANQUE PRINCIPALE
-// ══════════════════════════════════════
-if (isset($_POST['creer_commande_manuelle'])) {
-    $id_groupe = (int)$_POST['id_groupe'];
-    $quantite = (int)$_POST['quantite'];
-    $note = trim($_POST['note'] ?? '');
-    
-    // Récupérer le id_hopital rattaché
-    $stmtSB = $pdo->prepare("SELECT id_hopital FROM sous_banque WHERE id_sous_banque = ?");
-    $stmtSB->execute([$id_sous_banque]);
-    $id_hopital = $stmtSB->fetchColumn() ?: null;
-    
-    if ($id_groupe > 0 && $quantite > 0 && $id_hopital) {
-        $pdo->prepare("
-            INSERT INTO demande 
-            (id_hopital, id_sous_banque, id_banque, id_groupe, quantite_demandee, date_demande, statut, type_demande, note) 
-            VALUES (?, ?, ?, ?, ?, CURDATE(), 'en_attente', 'externe', ?)
-        ")->execute([$id_hopital, $id_sous_banque, $id_banque_principale, $id_groupe, $quantite, $note]);
-        
-        $message_success = "Votre commande manuelle de réapprovisionnement a été envoyée avec succès à la Banque Principale.";
-    } else {
-        $message_erreur = "Veuillez remplir correctement tous les champs de la commande.";
-    }
-}
-
-// Charger tous les groupes sanguins pour le formulaire
-$groupes = $pdo->query("SELECT * FROM groupe_sanguin ORDER BY libelle")->fetchAll(PDO::FETCH_ASSOC);
-
-// ══════════════════════════════════════
-// TRAITEMENT AUTOMATIQUE DES DEMANDES
-// ══════════════════════════════════════
-if (isset($_POST['action_demande'])) {
-    $id_demande = (int)$_POST['id_demande'];
-
-    try {
-        $pdo->beginTransaction();
-
-        // 1. Récupérer la demande interne de l'hôpital rattaché
-        $stmt = $pdo->prepare("SELECT * FROM demande WHERE id_demande = ? AND id_sous_banque = ? AND type_demande = 'interne' AND statut = 'en_attente'");
-        $stmt->execute([$id_demande, $id_sous_banque]);
-        $demande = $stmt->fetch();
-
-        if ($demande) {
-            $id_groupe = (int)$demande['id_groupe'];
-            $quantite_demandee = (int)$demande['quantite_demandee'];
-
-            // 2. Vérifier le stock disponible réel de la sous-banque pour ce groupe
-            $stmt_stock = $pdo->prepare("SELECT quantite_disponible, seuil_alerte FROM stock_sous_banque WHERE id_sous_banque = ? AND id_groupe = ?");
-            $stmt_stock->execute([$id_sous_banque, $id_groupe]);
-            $stock = $stmt_stock->fetch();
-            
-            $stock_actuel = $stock ? (int)$stock['quantite_disponible'] : 0;
-            $seuil_alerte = $stock ? (int)$stock['seuil_alerte'] : 3;
-
-            if ($stock_actuel >= $quantite_demandee) {
-                // ── CAS A : STOCK SUFFISANT ──> APPROBATION & SOUSTRACTION AUTO
-                
-                // Mettre à jour la demande
-                $pdo->prepare("UPDATE demande SET statut = 'acceptee' WHERE id_demande = ?")->execute([$id_demande]);
-
-                // Diminuer le stock automatiquement
-                $pdo->prepare("UPDATE stock_sous_banque SET quantite_disponible = quantite_disponible - ?, date_mise_a_jour = NOW() WHERE id_sous_banque = ? AND id_groupe = ?")
-                    ->execute([$quantite_demandee, $id_sous_banque, $id_groupe]);
-
-                // Ajouter l'historique dans mouvement_stock
-                $note = "Sortie automatique — Validation de la demande hôpital #" . $id_demande;
-                $pdo->prepare("INSERT INTO mouvement_stock (id_sous_banque, id_groupe, quantite, type_mouvement, date_mouvement, note) VALUES (?, ?, ?, 'sortie', NOW(), ?)")
-                    ->execute([$id_sous_banque, $id_groupe, $quantite_demandee, $note]);
-
-                $message_success = "La demande #" . $id_demande . " a été acceptée. Le stock a diminué automatiquement de " . $quantite_demandee . " poche(s).";
-
-            } else {
-                // ── CAS B : STOCK INSUFFISANT ──> REJET AUTO (PAS DE COMMANDE AUTOMATIQUE)
-                
-                // Mettre la demande de l'hôpital en rejeté
-                $pdo->prepare("UPDATE demande SET statut = 'refusee', note = 'Refus automatique : Stock insuffisant au dépôt' WHERE id_demande = ?")->execute([$id_demande]);
-
-                $message_erreur = "Stock insuffisant ! La demande #" . $id_demande . " a été refusée. Vous pouvez envoyer une commande de réapprovisionnement manuelle à la banque principale.";
-            }
-        }
-        $pdo->commit();
-    } catch (Exception $e) {
-        $pdo->rollBack();
-        $message_erreur = "Une erreur est survenue : " . $e->getMessage();
-    }
-}
-
-// ══════════════════════════════════════
-// CHARGEMENT DES TABLEAUX
-// ══════════════════════════════════════
-
-// 1. Demandes de l'hôpital (type_demande = 'interne')
-$stmt = $pdo->prepare("SELECT d.*, g.libelle as groupe_nom FROM demande d JOIN groupe_sanguin g ON d.id_groupe = g.id_groupe WHERE d.id_sous_banque = ? AND d.type_demande = 'interne' ORDER BY d.id_demande DESC");
-$stmt->execute([$id_sous_banque]);
-$demandes_internes = $stmt->fetchAll();
-
-// 2. Demandes envoyées à la Banque Principale (type_demande = 'externe')
-$stmt = $pdo->prepare("SELECT d.*, g.libelle as groupe_nom FROM demande d JOIN groupe_sanguin g ON d.id_groupe = g.id_groupe WHERE d.id_sous_banque = ? AND d.type_demande = 'externe' ORDER BY d.id_demande DESC");
-$stmt->execute([$id_sous_banque]);
-$demandes_externes = $stmt->fetchAll();
+require_once '../config/db.php';
 
 $page_active = 'demandes';
-include 'sidebar.php'; // On appelle l'Inclusion unique de la barre latérale ICI !
+include 'sidebar.php';
+
+$id_sb                = $_SESSION['id_sous_banque'];
+$id_banque_principale = $_SESSION['id_banque_principale'];
+$id_hopital           = $_SESSION['id_hopital'];
+$success = $erreur    = "";
+
+// ══════════════════════════════════════════════════════════════
+//  FONCTION : Vérifier seuil et déclencher alerte + demande auto
+// ══════════════════════════════════════════════════════════════
+function verifierSeuilEtAlerter($pdo, $id_sb, $id_groupe, $id_banque_principale, $id_hopital) {
+    $stmt = $pdo->prepare("
+        SELECT quantite_disponible, seuil_alerte
+        FROM stock_sous_banque
+        WHERE id_sous_banque = ? AND id_groupe = ?
+    ");
+    $stmt->execute([$id_sb, $id_groupe]);
+    $stock = $stmt->fetch();
+    if (!$stock) return;
+
+    $qty   = (int)$stock['quantite_disponible'];
+    $seuil = (int)$stock['seuil_alerte'];
+
+    if ($qty === 0)               $type_alerte = 'rupture';
+    elseif ($qty <= $seuil)       $type_alerte = 'critique';
+    elseif ($qty <= $seuil * 1.5) $type_alerte = 'avertissement';
+    else return;
+
+    // Ne pas créer de doublon d'alerte active
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM alerte_stock WHERE id_sous_banque = ? AND id_groupe = ? AND traitee = 0");
+    $stmt->execute([$id_sb, $id_groupe]);
+    if ((int)$stmt->fetchColumn() > 0) return;
+
+    $qte_a_demander = max(1, ($seuil * 2) - $qty);
+
+    $pdo->prepare("
+        INSERT INTO demande (id_hopital, id_sous_banque, id_banque, id_groupe, quantite_demandee,
+                             date_demande, statut, type_demande, note)
+        VALUES (?, ?, ?, ?, ?, CURDATE(), 'en_attente', 'externe',
+                'Demande automatique — seuil d\'alerte atteint')
+    ")->execute([$id_hopital, $id_sb, $id_banque_principale, $id_groupe, $qte_a_demander]);
+
+    $id_demande_auto = (int)$pdo->lastInsertId();
+
+    $pdo->prepare("
+        INSERT INTO alerte_stock (id_sous_banque, id_groupe, quantite_actuelle,
+                                  seuil_alerte, type_alerte, demande_auto,
+                                  id_demande_auto, date_alerte, traitee)
+        VALUES (?, ?, ?, ?, ?, 1, ?, NOW(), 0)
+    ")->execute([$id_sb, $id_groupe, $qty, $seuil, $type_alerte, $id_demande_auto]);
+
+    // Tracer l'alerte déclenchée et la demande auto dans l'historique centralisé
+    $stmtG = $pdo->prepare("SELECT libelle FROM groupe_sanguin WHERE id_groupe = ?");
+    $stmtG->execute([$id_groupe]);
+    $libelle_groupe_auto = $stmtG->fetchColumn();
+
+    $pdo->prepare("
+        INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, date_action)
+        VALUES (?, ?, 'alerte_declenchee', ?, ?, NOW())
+    ")->execute([
+        $id_sb, $id_groupe, $qty,
+        "Alerte {$type_alerte} déclenchée pour {$libelle_groupe_auto} ({$qty} pochette(s) restante(s), seuil {$seuil})"
+    ]);
+
+    $pdo->prepare("
+        INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, date_action)
+        VALUES (?, ?, 'demande_envoyee', ?, ?, NOW())
+    ")->execute([
+        $id_sb, $id_groupe, $qte_a_demander,
+        "Demande automatique envoyée à la banque principale : {$qte_a_demander} pochette(s) {$libelle_groupe_auto} (seuil atteint)"
+    ]);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  FONCTION : Déduire une quantité des lots disponibles (FIFO)
+//  Consomme en priorité les lots qui expirent le plus tôt, pour
+//  éviter de garder du sang périssable pendant qu'on distribue
+//  du stock plus frais. Marque un lot 'epuise' s'il atteint 0.
+//  Retourne true si la déduction a pu être faite intégralement.
+// ══════════════════════════════════════════════════════════════
+function deduireLotsFIFO($pdo, $id_sb, $id_groupe, $quantite_a_deduire) {
+    $stmt = $pdo->prepare("
+        SELECT id_lot, quantite
+        FROM lot_sang_sous_banque
+        WHERE id_sous_banque = ? AND id_groupe = ? AND statut = 'disponible' AND quantite > 0
+        ORDER BY date_expiration ASC
+        FOR UPDATE
+    ");
+    $stmt->execute([$id_sb, $id_groupe]);
+    $lots = $stmt->fetchAll();
+
+    $restant = $quantite_a_deduire;
+
+    foreach ($lots as $lot) {
+        if ($restant <= 0) break;
+
+        $pris = min($restant, (int)$lot['quantite']);
+        $nouvelle_quantite = (int)$lot['quantite'] - $pris;
+
+        if ($nouvelle_quantite <= 0) {
+            $pdo->prepare("UPDATE lot_sang_sous_banque SET quantite = 0, statut = 'epuise' WHERE id_lot = ?")
+                ->execute([$lot['id_lot']]);
+        } else {
+            $pdo->prepare("UPDATE lot_sang_sous_banque SET quantite = ? WHERE id_lot = ?")
+                ->execute([$nouvelle_quantite, $lot['id_lot']]);
+        }
+
+        $restant -= $pris;
+    }
+
+    // $restant > 0 signifie que les lots connus ne couvraient pas tout
+    // (incohérence possible avec stock_sous_banque, mais on ne bloque pas
+    // l'opération principale pour autant — on le signale simplement).
+    return $restant <= 0;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  TRAITEMENT : Répondre à une demande de l'hôpital
+//  - Si stock suffisant  → accepter + déduire stock
+//  - Si stock insuffisant → refuser + demande auto à la banque
+// ══════════════════════════════════════════════════════════════
+if (isset($_GET['traiter'])) {
+    $id_demande = (int)$_GET['traiter'];
+
+    // Récupérer la demande
+    $stmt = $pdo->prepare("
+        SELECT d.*, g.libelle AS groupe
+        FROM demande d
+        JOIN groupe_sanguin g ON g.id_groupe = d.id_groupe
+        WHERE d.id_demande = ? AND d.id_sous_banque = ? AND d.type_demande = 'interne' AND d.statut = 'en_attente'
+    ");
+    $stmt->execute([$id_demande, $id_sb]);
+    $demande = $stmt->fetch();
+
+    if (!$demande) {
+        $erreur = "Demande introuvable ou déjà traitée.";
+    } else {
+        $id_groupe = (int)$demande['id_groupe'];
+        $quantite  = (int)$demande['quantite_demandee'];
+
+        // Vérifier stock disponible
+        $stmt = $pdo->prepare("
+            SELECT COALESCE(quantite_disponible, 0) FROM stock_sous_banque
+            WHERE id_sous_banque = ? AND id_groupe = ?
+        ");
+        $stmt->execute([$id_sb, $id_groupe]);
+        $stock_dispo = (int)$stmt->fetchColumn();
+
+        if ($stock_dispo >= $quantite) {
+            // ── Stock suffisant → ACCEPTER automatiquement ──
+            $pdo->beginTransaction();
+            try {
+                // 1. Mettre à jour statut demande
+                $pdo->prepare("
+                    UPDATE demande SET statut = 'acceptée', date_reponse = CURDATE()
+                    WHERE id_demande = ?
+                ")->execute([$id_demande]);
+
+                // 2. Déduire du stock sous-banque (total agrégé)
+                $pdo->prepare("
+                    UPDATE stock_sous_banque
+                    SET quantite_disponible = quantite_disponible - ?,
+                        date_mise_a_jour = CURDATE()
+                    WHERE id_sous_banque = ? AND id_groupe = ?
+                ")->execute([$quantite, $id_sb, $id_groupe]);
+
+                // 3. Déduire des lots individuels (FIFO : lot qui expire le plus tôt en premier)
+                $lots_suffisants = deduireLotsFIFO($pdo, $id_sb, $id_groupe, $quantite);
+
+                // 4. Tracer mouvement
+                $pdo->prepare("
+                    INSERT INTO mouvement_stock (id_sous_banque, id_groupe, quantite, type_mouvement, date_mouvement, note)
+                    VALUES (?, ?, ?, 'sortie', NOW(), 'Demande hôpital acceptée — automatique')
+                ")->execute([$id_sb, $id_groupe, $quantite]);
+
+                // 5. Tracer dans l'historique centralisé
+                $note_lots = $lots_suffisants ? '' : ' [Attention : lots insuffisants pour couvrir cette sortie — vérifier la cohérence du stock]';
+                $pdo->prepare("
+                    INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, date_action)
+                    VALUES (?, ?, 'demande_recue_traitee', ?, ?, NOW())
+                ")->execute([
+                    $id_sb, $id_groupe, $quantite,
+                    "Demande hôpital acceptée : {$quantite} pochette(s) {$demande['groupe']} accordées" . $note_lots
+                ]);
+
+                $pdo->commit();
+
+                // 6. Vérifier seuil après déduction (hors transaction : lecture + écritures indépendantes)
+                verifierSeuilEtAlerter($pdo, $id_sb, $id_groupe, $id_banque_principale, $id_hopital);
+
+                $success = "Demande acceptée — <strong>$quantite</strong> pochette(s) de <strong>" . htmlspecialchars($demande['groupe']) . "</strong> accordées à l'hôpital.";
+                if (!$lots_suffisants) {
+                    $success .= " <em>(Avertissement : le détail par lot était insuffisant pour couvrir cette quantité — vérifiez la page Suivi des Lots.)</em>";
+                }
+
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                $erreur = "Erreur lors du traitement de la demande. Aucune modification n'a été appliquée.";
+            }
+
+        } else {
+            // ── Stock insuffisant → REFUSER + demande auto à la banque ──
+
+            // 1. Refuser la demande hôpital
+            $pdo->prepare("
+                UPDATE demande SET statut = 'refusée', date_reponse = CURDATE(),
+                note = CONCAT(COALESCE(note,''), ' | Refus automatique : stock insuffisant (', ?, ' disponible(s))')
+                WHERE id_demande = ?
+            ")->execute([$stock_dispo, $id_demande]);
+
+            // 2. Tracer le refus dans l'historique centralisé
+            $pdo->prepare("
+                INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, date_action)
+                VALUES (?, ?, 'demande_recue_traitee', ?, ?, NOW())
+            ")->execute([
+                $id_sb, $id_groupe, $quantite,
+                "Demande hôpital refusée : stock insuffisant pour {$quantite} pochette(s) {$demande['groupe']} ({$stock_dispo} disponible(s))"
+            ]);
+
+            // 3. Vérifier si une demande externe existe déjà en attente pour ce groupe
+            $stmt = $pdo->prepare("
+                SELECT COUNT(*) FROM demande
+                WHERE id_sous_banque = ? AND id_groupe = ?
+                AND type_demande = 'externe' AND statut = 'en_attente'
+            ");
+            $stmt->execute([$id_sb, $id_groupe]);
+            $demande_externe_existe = (int)$stmt->fetchColumn() > 0;
+
+            if (!$demande_externe_existe) {
+                // 4. Créer demande automatique à la banque principale
+                $qte_a_demander = max($quantite, ($demande['seuil_alerte'] ?? 3) * 2);
+                $pdo->prepare("
+                    INSERT INTO demande (id_hopital, id_sous_banque, id_banque, id_groupe, quantite_demandee,
+                                         date_demande, statut, type_demande, note)
+                    VALUES (?, ?, ?, ?, ?, CURDATE(), 'en_attente', 'externe',
+                            'Demande automatique — stock insuffisant pour répondre à l\'hôpital')
+                ")->execute([$id_hopital, $id_sb, $id_banque_principale, $id_groupe, $qte_a_demander]);
+
+                // 5. Tracer la demande automatique dans l'historique centralisé
+                $pdo->prepare("
+                    INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, date_action)
+                    VALUES (?, ?, 'demande_envoyee', ?, ?, NOW())
+                ")->execute([
+                    $id_sb, $id_groupe, $qte_a_demander,
+                    "Demande automatique envoyée à la banque principale : {$qte_a_demander} pochette(s) {$demande['groupe']}"
+                ]);
+
+                $success = "Stock insuffisant (<strong>$stock_dispo</strong> disponible(s)). Demande refusée à l'hôpital et une demande de <strong>$qte_a_demander</strong> pochette(s) a été envoyée automatiquement à la banque principale.";
+            } else {
+                $success = "Stock insuffisant (<strong>$stock_dispo</strong> disponible(s)). Demande refusée à l'hôpital. Une demande est déjà en cours auprès de la banque principale.";
+            }
+        }
+    }
+}
+
+// ── Demandes internes reçues de l'hôpital (en attente) ──
+$stmt = $pdo->prepare("
+    SELECT d.*, g.libelle AS groupe,
+           COALESCE(s.quantite_disponible, 0) AS stock_dispo
+    FROM demande d
+    JOIN groupe_sanguin g ON g.id_groupe = d.id_groupe
+    LEFT JOIN stock_sous_banque s ON s.id_groupe = d.id_groupe AND s.id_sous_banque = d.id_sous_banque
+    WHERE d.id_sous_banque = ? AND d.type_demande = 'interne'
+    ORDER BY
+        CASE d.statut WHEN 'en_attente' THEN 0 ELSE 1 END,
+        d.date_demande DESC
+");
+$stmt->execute([$id_sb]);
+$demandes_hopital = $stmt->fetchAll();
+
+// ── Demandes externes envoyées à la banque principale ──
+$stmt = $pdo->prepare("
+    SELECT d.*, g.libelle AS groupe, b.nom AS nom_banque
+    FROM demande d
+    JOIN groupe_sanguin g ON g.id_groupe = d.id_groupe
+    JOIN banque_de_sang b ON b.id_banque = d.id_banque
+    WHERE d.id_sous_banque = ? AND d.type_demande = 'externe'
+    ORDER BY d.date_demande DESC
+    LIMIT 20
+");
+$stmt->execute([$id_sb]);
+$demandes_banque = $stmt->fetchAll();
+
+// Compteurs
+$nb_attente   = count(array_filter($demandes_hopital, fn($d) => $d['statut'] === 'en_attente'));
+$nb_acceptees = count(array_filter($demandes_hopital, fn($d) => $d['statut'] === 'acceptée'));
+$nb_refusees  = count(array_filter($demandes_hopital, fn($d) => $d['statut'] === 'refusée'));
+$nb_ext_attente = count(array_filter($demandes_banque, fn($d) => $d['statut'] === 'en_attente'));
 ?>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demandes | E-Sang</title>
+    <style>
+        .tabs {
+            display: flex;
+            gap: 0;
+            border-bottom: 2px solid #E5E7EB;
+            margin-bottom: 24px;
+        }
 
-<style>
-    .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); backdrop-filter:blur(3px); z-index:999; align-items:center; justify-content:center; }
-    .modal-overlay.open { display:flex; }
-    .modal { background:#FFFFFF; border-radius:20px; width:100%; max-width:420px; padding:28px; box-shadow:0 20px 50px rgba(0,0,0,0.15); animation:slideUp 0.2s ease; }
-    .modal-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; padding-bottom:14px; border-bottom:2px solid #F3F4F6; }
-    .modal-title { font-size:17px; font-weight:800; color:#111111; display:flex; align-items:center; gap:10px; }
-    .modal-title::before { content:''; display:block; width:4px; height:20px; background:#6B0000; border-radius:99px; }
-    .modal-close { width:32px; height:32px; border-radius:8px; background:#F3F4F6; border:none; cursor:pointer; font-size:16px; color:#6B7280; display:flex; align-items:center; justify-content:center; }
-    .modal-close:hover { background:#FEF2F2; color:#6B0000; }
-    .btn-nouvelle { background:#6B0000; color:white; border:none; padding:10px 18px; border-radius:8px; cursor:pointer; font-weight:700; font-size:14px; display:inline-flex; align-items:center; gap:6px; transition: background 0.15s; }
-    .btn-nouvelle:hover { background:#4C0000; }
-</style>
+        .tab-btn {
+            padding: 12px 24px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #6B7280;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-family: inherit;
+            position: relative;
+            bottom: -2px;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
 
+        .tab-btn:hover { color: #6B0000; }
+
+        .tab-btn.active {
+            color: #6B0000;
+            border-bottom-color: #6B0000;
+            font-weight: 700;
+        }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .badge-count {
+            background: #6B0000;
+            color: #fff;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 999px;
+        }
+
+        .badge-count-gray {
+            background: #E5E7EB;
+            color: #374151;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 999px;
+        }
+
+        /* Bouton traiter */
+        .btn-traiter {
+            background: #6B0000;
+            color: #FFFFFF;
+            border: none;
+            border-radius: 7px;
+            padding: 6px 14px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            font-family: inherit;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            transition: all 0.15s;
+        }
+        .btn-traiter:hover { background: #4B0000; }
+
+        /* Stock dispo inline */
+        .stock-inline {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 6px;
+        }
+        .stock-ok      { background: #D1FAE5; color: #065F46; }
+        .stock-insuffisant { background: #FEF2F2; color: #6B0000; }
+    </style>
+</head>
+<body>
 <div class="main-content">
-    
-    <div class="page-header" style="margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center;">
-        <div>
-            <h1 style="font-size: 28px; font-weight: 800; color: #111827; margin: 0 0 4px 0;">Gestion des Demandes</h1>
-            <p style="color: #6B7280; margin: 0; font-size: 14px;">Suivi automatisé des flux de poches de sang entrantes et sortantes.</p>
+
+    <div class="page-header">
+        <h1>Demandes</h1>
+        <p>Gérez les demandes reçues de l'hôpital et suivez les demandes envoyées à la banque principale.</p>
+    </div>
+
+    <?php if ($success): ?>
+        <div class="alerte-success">✅ <?php echo $success; ?></div>
+    <?php endif; ?>
+    <?php if ($erreur): ?>
+        <div class="alerte-erreur">⚠️ <?php echo htmlspecialchars($erreur); ?></div>
+    <?php endif; ?>
+
+    <!-- STATS -->
+    <div class="stats" style="grid-template-columns:repeat(4,1fr); margin-bottom:28px;">
+        <div class="stat-card" style="<?php echo $nb_attente > 0 ? 'border-color:#FCD34D;' : ''; ?>">
+            <div class="stat-card-header">
+                <span class="stat-label">En attente</span>
+                <span class="stat-icon ic-org">⏳</span>
+            </div>
+            <span class="stat-number" style="<?php echo $nb_attente > 0 ? 'color:#92400E;' : ''; ?>"><?php echo $nb_attente; ?></span>
         </div>
-        <button class="btn-nouvelle" onclick="ouvrirModalCommande()">
-            ➕ Nouvelle commande BP
+        <div class="stat-card">
+            <div class="stat-card-header">
+                <span class="stat-label">Acceptées</span>
+                <span class="stat-icon ic-grn">✅</span>
+            </div>
+            <span class="stat-number" style="color:#166534;"><?php echo $nb_acceptees; ?></span>
+        </div>
+        <div class="stat-card">
+            <div class="stat-card-header">
+                <span class="stat-label">Refusées</span>
+                <span class="stat-icon ic-red">❌</span>
+            </div>
+            <span class="stat-number" style="color:#6B0000;"><?php echo $nb_refusees; ?></span>
+        </div>
+        <div class="stat-card" style="<?php echo $nb_ext_attente > 0 ? 'border-color:#BFDBFE;' : ''; ?>">
+            <div class="stat-card-header">
+                <span class="stat-label">Vers banque</span>
+                <span class="stat-icon ic-blu">🏦</span>
+            </div>
+            <span class="stat-number" style="color:#1D4ED8;"><?php echo $nb_ext_attente; ?></span>
+        </div>
+    </div>
+
+    <!-- ONGLETS -->
+    <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('tab-hopital', this)">
+            🏥 Demandes de l'hôpital
+            <?php if ($nb_attente > 0): ?>
+                <span class="badge-count"><?php echo $nb_attente; ?></span>
+            <?php endif; ?>
+        </button>
+        <button class="tab-btn" onclick="switchTab('tab-banque', this)">
+            🏦 Envoyées à la banque
+            <span class="badge-count-gray"><?php echo count($demandes_banque); ?></span>
         </button>
     </div>
 
-    <?php if ($message_success): ?>
-        <div style="background:#DEF7EC; color:#03543F; padding:12px 16px; border-radius:8px; margin-bottom:20px; font-weight:600; font-size:14px;">✅ <?php echo $message_success; ?></div>
-    <?php endif; ?>
-    <?php if ($message_erreur): ?>
-        <div style="background:#FDE8E8; color:#9B1C1C; padding:12px 16px; border-radius:8px; margin-bottom:20px; font-weight:600; font-size:14px;">⚠️ <?php echo $message_erreur; ?></div>
-    <?php endif; ?>
+    <!-- ONGLET 1 : Demandes de l'hôpital -->
+    <div id="tab-hopital" class="tab-content active">
+        <div class="section">
+            <div class="section-header">
+                <div class="section-title">Demandes reçues de l'hôpital</div>
+                <span class="cnt-badge"><?php echo count($demandes_hopital); ?> demande(s)</span>
+            </div>
 
-    <div style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 30px;">
-        <h2 style="font-size: 18px; font-weight: 700; color: #111827; margin-top:0; margin-bottom:15px;">🩸 Demandes de l'Hôpital Rattaché (Internes)</h2>
-        <div style="overflow-x: auto;">
-            <table style="width:100%; border-collapse:collapse; text-align:left; font-size:13px;">
-                <thead>
-                    <tr style="background:#F9FAFB; color:#4B5563;">
-                        <th style="padding:12px; border-bottom:1px solid #E5E7EB;">ID</th>
-                        <th style="padding:12px; border-bottom:1px solid #E5E7EB;">Groupe</th>
-                        <th style="padding:12px; border-bottom:1px solid #E5E7EB;">Quantité</th>
-                        <th style="padding:12px; border-bottom:1px solid #E5E7EB;">Date Demande</th>
-                        <th style="padding:12px; border-bottom:1px solid #E5E7EB;">Statut</th>
-                        <th style="padding:12px; border-bottom:1px solid #E5E7EB;">Action Auto</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php if(empty($demandes_internes)): ?>
-                        <tr><td colspan="6" style="padding:20px; text-align:center; color:#9CA3AF;">Aucune demande reçue.</td></tr>
-                    <?php else: ?>
-                        <?php foreach($demandes_internes as $d): ?>
+            <?php if ($nb_attente > 0): ?>
+            <div class="alerte-warning" style="margin-bottom:16px;">
+                ⏳ <strong><?php echo $nb_attente; ?></strong> demande(s) en attente de traitement.
+                Le système va vérifier automatiquement le stock et répondre.
+            </div>
+            <?php endif; ?>
+
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Groupe</th>
+                            <th>Quantité demandée</th>
+                            <th>Stock disponible</th>
+                            <th>Date demande</th>
+                            <th>Date réponse</th>
+                            <th>Statut</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if ($demandes_hopital): ?>
+                            <?php foreach ($demandes_hopital as $d):
+                                $stock_ok = (int)$d['stock_dispo'] >= (int)$d['quantite_demandee'];
+                            ?>
                             <tr>
-                                <td style="padding:12px; border-bottom:1px solid #F3F4F6;">#<?php echo $d['id_demande']; ?></td>
-                                <td style="padding:12px; border-bottom:1px solid #F3F4F6;"><span style="background:#FDE8E8; color:#9B1C1C; padding:3px 8px; border-radius:4px; font-weight:700;"><?php echo htmlspecialchars($d['groupe_nom']); ?></span></td>
-                                <td style="padding:12px; border-bottom:1px solid #F3F4F6; font-weight:bold;"><?php echo (int)$d['quantite_demandee']; ?> pochette(s)</td>
-                                <td style="padding:12px; border-bottom:1px solid #F3F4F6;"><?php echo $d['date_demande']; ?></td>
-                                <td style="padding:12px; border-bottom:1px solid #F3F4F6;">
-                                    <?php if($d['statut'] == 'en_attente'): ?>
-                                        <span style="background:#FEF3C7; color:#D97706; padding:4px 8px; border-radius:12px; font-weight:600; font-size:12px;">En attente</span>
-                                    <?php elseif($d['statut'] == 'acceptee'): ?>
-                                        <span style="background:#DEF7EC; color:#03543F; padding:4px 8px; border-radius:12px; font-weight:600; font-size:12px;">Acceptée (- Stock)</span>
+                                <td><span class="badge badge-groupe"><?php echo htmlspecialchars($d['groupe']); ?></span></td>
+                                <td><strong><?php echo (int)$d['quantite_demandee']; ?></strong> pochette(s)</td>
+                                <td>
+                                    <span class="stock-inline <?php echo $stock_ok ? 'stock-ok' : 'stock-insuffisant'; ?>">
+                                        <?php echo (int)$d['stock_dispo']; ?> dispo
+                                        <?php echo $stock_ok ? '✓' : '✗'; ?>
+                                    </span>
+                                </td>
+                                <td><?php echo date('d/m/Y H:i', strtotime($d['date_demande'])); ?></td>
+                                <td>
+                                    <?php echo $d['date_reponse']
+                                        ? date('d/m/Y H:i', strtotime($d['date_reponse']))
+                                        : '<span style="color:#9CA3AF;">—</span>';
+                                    ?>
+                                </td>
+                                <td>
+                                    <?php if ($d['statut'] === 'en_attente'): ?>
+                                        <span class="badge badge-attente">En attente</span>
+                                    <?php elseif ($d['statut'] === 'acceptée'): ?>
+                                        <span class="badge badge-ok">✓ Acceptée</span>
                                     <?php else: ?>
-                                        <span style="background:#FDE8E8; color:#9B1C1C; padding:4px 8px; border-radius:12px; font-weight:600; font-size:12px;">Refusée (Sans Stock)</span>
+                                        <span class="badge badge-vide">✗ Refusée</span>
                                     <?php endif; ?>
                                 </td>
-                                <td style="padding:12px; border-bottom:1px solid #F3F4F6;">
-                                    <?php if($d['statut'] == 'en_attente'): ?>
-                                        <form method="POST" style="margin:0;">
-                                            <input type="hidden" name="id_demande" value="<?php echo $d['id_demande']; ?>">
-                                            <button type="submit" name="action_demande" value="traiter" style="background:#6B0000; color:white; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-weight:600; font-size:12px;">
-                                                Traiter automatiquement
-                                            </button>
-                                        </form>
+                                <td>
+                                    <?php if ($d['statut'] === 'en_attente'): ?>
+                                        <a href="?traiter=<?php echo $d['id_demande']; ?>"
+                                           class="btn-traiter"
+                                           onclick="return confirm('Traiter cette demande automatiquement ?')">
+                                            ⚡ Traiter
+                                        </a>
                                     <?php else: ?>
-                                        <span style="color:#9CA3AF; font-style:italic;">Traité</span>
+                                        <span style="color:#9CA3AF; font-size:12px;">—</span>
                                     <?php endif; ?>
                                 </td>
                             </tr>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </tbody>
-            </table>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <tr><td colspan="7" class="vide">Aucune demande reçue de l'hôpital pour le moment.</td></tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 
-    <div style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-        <h2 style="font-size: 18px; font-weight: 700; color: #111827; margin-top:0; margin-bottom:15px;">🏢 Suivi des commandes à la Banque Principale (Externes)</h2>
-        <div style="overflow-x: auto;">
-            <table style="width:100%; border-collapse:collapse; text-align:left; font-size:13px;">
-                <thead>
-                    <tr style="background:#F9FAFB; color:#4B5563;">
-                        <th style="padding:12px; border-bottom:1px solid #E5E7EB;">ID Commande</th>
-                        <th style="padding:12px; border-bottom:1px solid #E5E7EB;">Groupe</th>
-                        <th style="padding:12px; border-bottom:1px solid #E5E7EB;">Quantité Demandée</th>
-                        <th style="padding:12px; border-bottom:1px solid #E5E7EB;">Date d'Envoi</th>
-                        <th style="padding:12px; border-bottom:1px solid #E5E7EB;">Statut de livraison</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php if(empty($demandes_externes)): ?>
-                        <tr><td colspan="5" style="padding:20px; text-align:center; color:#9CA3AF;">Aucun réapprovisionnement automatique lancé.</td></tr>
-                    <?php else: ?>
-                        <?php foreach($demandes_externes as $e): ?>
+    <!-- ONGLET 2 : Demandes envoyées à la banque -->
+    <div id="tab-banque" class="tab-content">
+        <div class="section">
+            <div class="section-header">
+                <div class="section-title">Demandes envoyées à la banque principale</div>
+                <span class="cnt-badge"><?php echo count($demandes_banque); ?> demande(s)</span>
+            </div>
+
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Banque</th>
+                            <th>Groupe</th>
+                            <th>Quantité</th>
+                            <th>Date demande</th>
+                            <th>Date réponse</th>
+                            <th>Note</th>
+                            <th>Statut</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if ($demandes_banque): ?>
+                            <?php foreach ($demandes_banque as $d): ?>
                             <tr>
-                                <td style="padding:12px; border-bottom:1px solid #F3F4F6;">#<?php echo $e['id_demande']; ?></td>
-                                <td style="padding:12px; border-bottom:1px solid #F3F4F6;"><span style="background:#E0F2FE; color:#0369A1; padding:3px 8px; border-radius:4px; font-weight:700;"><?php echo htmlspecialchars($e['groupe_nom']); ?></span></td>
-                                <td style="padding:12px; border-bottom:1px solid #F3F4F6; font-weight:bold;"><?php echo (int)$e['quantite_demandee']; ?> poche(s)</td>
-                                <td style="padding:12px; border-bottom:1px solid #F3F4F6;"><?php echo $e['date_demande']; ?></td>
-                                <td style="padding:12px; border-bottom:1px solid #F3F4F6;">
-                                    <?php if($e['statut'] == 'en_attente'): ?>
-                                        <span style="background:#FEF3C7; color:#D97706; padding:4px 8px; border-radius:12px; font-weight:600; font-size:11px;">En cours d'examen à la BP</span>
-                                    <?php elseif($e['statut'] == 'acceptee'): ?>
-                                        <span style="background:#DEF7EC; color:#03543F; padding:4px 8px; border-radius:12px; font-weight:600; font-size:11px;">Validée — Expédiée</span>
+                                <td><?php echo htmlspecialchars($d['nom_banque']); ?></td>
+                                <td><span class="badge badge-groupe"><?php echo htmlspecialchars($d['groupe']); ?></span></td>
+                                <td><strong><?php echo (int)$d['quantite_demandee']; ?></strong> pochette(s)</td>
+                                <td><?php echo date('d/m/Y', strtotime($d['date_demande'])); ?></td>
+                                <td>
+                                    <?php echo $d['date_reponse']
+                                        ? date('d/m/Y', strtotime($d['date_reponse']))
+                                        : '<span style="color:#9CA3AF;">—</span>';
+                                    ?>
+                                </td>
+                                <td style="max-width:180px; font-size:12px; color:#6B7280; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="<?php echo htmlspecialchars($d['note'] ?? ''); ?>">
+                                    <?php echo htmlspecialchars($d['note'] ?? '—'); ?>
+                                </td>
+                                <td>
+                                    <?php if ($d['statut'] === 'en_attente'): ?>
+                                        <span class="badge badge-attente">En attente</span>
+                                    <?php elseif ($d['statut'] === 'acceptée'): ?>
+                                        <span class="badge badge-ok">✓ Acceptée</span>
                                     <?php else: ?>
-                                        <span style="background:#FDE8E8; color:#9B1C1C; padding:4px 8px; border-radius:12px; font-weight:600; font-size:11px;">Annulée</span>
+                                        <span class="badge badge-vide">✗ Refusée</span>
                                     <?php endif; ?>
                                 </td>
                             </tr>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </tbody>
-            </table>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <tr><td colspan="7" class="vide">Aucune demande envoyée à la banque principale pour le moment.</td></tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 
-</div>
-
-<!-- MODAL COMMANDE MANUELLE -->
-<div class="modal-overlay" id="modalCommande" onclick="fermerModalOverlay(event)">
-    <div class="modal">
-        <div class="modal-header">
-            <div class="modal-title">Nouvelle commande (Banque de Sang)</div>
-            <button class="modal-close" onclick="fermerModal()">✕</button>
-        </div>
-        <form method="POST">
-            <input type="hidden" name="creer_commande_manuelle" value="1" />
-            
-            <div class="form-group">
-                <label for="id_groupe">Groupe Sanguin</label>
-                <select name="id_groupe" id="id_groupe" required style="width: 100%; padding: 10px 12px; border: 1.5px solid #E5E7EB; border-radius: 8px; font-size: 14px; background:white;">
-                    <option value="">— Sélectionner —</option>
-                    <?php foreach ($groupes as $g): ?>
-                        <option value="<?php echo $g['id_groupe']; ?>"><?php echo htmlspecialchars($g['libelle']); ?></option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            
-            <div class="form-group" style="margin-top: 14px;">
-                <label for="quantite">Quantité (Pochettes)</label>
-                <input type="number" name="quantite" id="quantite" min="1" max="100" required style="width: 100%; padding: 10px 12px; border: 1.5px solid #E5E7EB; border-radius: 8px; font-size: 14px;" placeholder="Ex: 5" />
-            </div>
-
-            <div class="form-group" style="margin-top: 14px;">
-                <label for="note">Note ou justification</label>
-                <textarea name="note" id="note" style="width: 100%; padding: 10px 12px; border: 1.5px solid #E5E7EB; border-radius: 8px; font-size: 14px; font-family: inherit; height: 80px;" placeholder="Détails (optionnel)..."></textarea>
-            </div>
-            
-            <button type="submit" style="width: 100%; background: #6B0000; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: 700; font-size: 14px; cursor: pointer; margin-top: 20px; transition: background 0.15s;">
-                Envoyer la commande
-            </button>
-        </form>
-    </div>
 </div>
 
 <script>
-function ouvrirModalCommande() {
-    document.getElementById('modalCommande').classList.add('open');
+function switchTab(tabId, btn) {
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById(tabId).classList.add('active');
+    btn.classList.add('active');
 }
-function fermerModal() {
-    document.getElementById('modalCommande').classList.remove('open');
-}
-function fermerModalOverlay(e) {
-    if (e.target === document.getElementById('modalCommande')) fermerModal();
-}
-document.addEventListener('keydown', e => { if (e.key === 'Escape') fermerModal(); });
 </script>
-
 </body>
 </html>

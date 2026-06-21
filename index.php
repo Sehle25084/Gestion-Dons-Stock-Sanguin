@@ -11,22 +11,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
     $identifiant  = trim($_POST['identifiant']);
     $mot_de_passe = $_POST['mot_de_passe'];
 
+    // ─── Message d'erreur générique pour ne pas révéler quels comptes existent ──
+    $msg_erreur_generique = "Identifiant ou mot de passe incorrect.";
+
     if (empty($identifiant) || empty($mot_de_passe)) {
         $erreur = "Veuillez remplir tous les champs.";
     }
     else if ($type_actif === 'nni') {
         // ══ Connexion DONNEUR (par NNI) ══
-        $stmt = $pdo->prepare("SELECT * FROM donneur WHERE NNI = ?");
-        $stmt->execute([$identifiant]);
-        $donneur = $stmt->fetch();
-        if ($donneur && password_verify($mot_de_passe, $donneur['mot_de_passe'])) {
-            $_SESSION['role'] = 'donneur';
-            $_SESSION['id']   = $donneur['id_donneur'];
-            $_SESSION['NNI']  = $donneur['NNI'];
-            header("Location: donneur/dashboard.php");
-            exit;
+
+        // ✔ CORRECTION #1 : Validation NNI = exactement 10 chiffres
+        if (!preg_match('/^\d{10}$/', $identifiant)) {
+            $erreur = "Le NNI doit contenir exactement 10 chiffres.";
+        } else {
+            $stmt = $pdo->prepare("SELECT * FROM donneur WHERE NNI = ?");
+            $stmt->execute([$identifiant]);
+            $donneur = $stmt->fetch();
+            if ($donneur && password_verify($mot_de_passe, $donneur['mot_de_passe'])) {
+
+                // ✔ CORRECTION #2 : régénération de l'ID de session (anti session-fixation)
+                session_regenerate_id(true);
+
+                $_SESSION['role'] = 'donneur';
+                $_SESSION['id']   = $donneur['id_donneur'];
+                $_SESSION['NNI']  = $donneur['NNI'];
+                header("Location: donneur/dashboard.php");
+                exit;
+            }
+            $erreur = $msg_erreur_generique;
         }
-        $erreur = "NNI ou mot de passe incorrect.";
     }
     else {
         // ══ Connexion par EMAIL — Admin / Banque / Sous-banque / Hôpital ══
@@ -36,6 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
         $stmt->execute([$identifiant]);
         $admin = $stmt->fetch();
         if ($admin && password_verify($mot_de_passe, $admin['mot_de_passe'])) {
+            session_regenerate_id(true);
             $_SESSION['role']   = 'admin';
             $_SESSION['id']     = $admin['id_admin'];
             $_SESSION['email']  = $admin['email'];
@@ -50,6 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
         $stmt->execute([$identifiant]);
         $banque = $stmt->fetch();
         if ($banque && password_verify($mot_de_passe, $banque['mot_de_passe'])) {
+            session_regenerate_id(true);
             $_SESSION['role']  = 'banque';
             $_SESSION['id']    = $banque['id_banque'];
             $_SESSION['nom']   = $banque['nom'];
@@ -63,6 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
         $stmt->execute([$identifiant]);
         $sous_banque = $stmt->fetch();
         if ($sous_banque && password_verify($mot_de_passe, $sous_banque['mot_de_passe'])) {
+            session_regenerate_id(true);
             $_SESSION['role']                 = 'sous_banque';
             $_SESSION['id']                   = $sous_banque['id_sous_banque'];
             $_SESSION['id_sous_banque']       = $sous_banque['id_sous_banque'];
@@ -81,13 +97,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
         $stmt = $pdo->prepare("SELECT * FROM responsable_hopital WHERE email = ?");
         $stmt->execute([$identifiant]);
         $responsable = $stmt->fetch();
-        
+
         if ($responsable && password_verify($mot_de_passe, $responsable['mot_de_passe'])) {
             // Récupérer les infos de l'hôpital associé
             $stmtHop = $pdo->prepare("SELECT nom, id_banque FROM hopital WHERE id_hopital = ?");
             $stmtHop->execute([$responsable['id_hopital']]);
             $hopital = $stmtHop->fetch();
-            
+
+            session_regenerate_id(true);
             $_SESSION['role']               = 'hopital';
             $_SESSION['id_hopital']         = $responsable['id_hopital'];
             $_SESSION['id_responsable']     = $responsable['id_responsable'];
@@ -99,20 +116,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
             header("Location: hospital/dashboard.php");
             exit;
         }
-        
+
         // Sinon, essayer via le compte hôpital global
         $stmt = $pdo->prepare("SELECT * FROM hopital WHERE email = ?");
         $stmt->execute([$identifiant]);
         $hopital = $stmt->fetch();
-        
+
         if ($hopital && password_verify($mot_de_passe, $hopital['mot_de_passe'])) {
+
             // Vérifier s'il y a déjà un responsable pour cet hôpital
             $stmtResp = $pdo->prepare("SELECT * FROM responsable_hopital WHERE id_hopital = ? ORDER BY id_responsable ASC LIMIT 1");
             $stmtResp->execute([$hopital['id_hopital']]);
             $responsable = $stmtResp->fetch();
-            
+
             if (!$responsable) {
-                // Créer un responsable par défaut si aucun n'existe
+                // ✔ CORRECTION #3 : on hashe le mot de passe EN CLAIR
+                //   (avant : on copiait le hash de hopital, créant un DOUBLE HASH
+                //    qui empêchait toute reconnexion future en tant que responsable)
+                $hash_propre = password_hash($mot_de_passe, PASSWORD_DEFAULT);
+
                 $insertResp = $pdo->prepare("
                     INSERT INTO responsable_hopital (id_hopital, nom, prenom, email, telephone, mot_de_passe, poste)
                     VALUES (?, 'Général', 'Responsable', ?, ?, ?, 'Direction')
@@ -121,16 +143,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
                     $hopital['id_hopital'],
                     $hopital['email'],
                     $hopital['telephone'] ?: null,
-                    $hopital['mot_de_passe']
+                    $hash_propre
                 ]);
                 $id_resp = $pdo->lastInsertId();
-                
+
                 // Récupérer le responsable nouvellement créé
                 $stmtResp = $pdo->prepare("SELECT * FROM responsable_hopital WHERE id_responsable = ?");
                 $stmtResp->execute([$id_resp]);
                 $responsable = $stmtResp->fetch();
             }
-            
+
+            session_regenerate_id(true);
             $_SESSION['role']               = 'hopital';
             $_SESSION['id_hopital']         = $hopital['id_hopital'];
             $_SESSION['id_responsable']     = $responsable['id_responsable'];
@@ -143,7 +166,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
             exit;
         }
 
-        $erreur = "Email/NNI ou mot de passe incorrect.";
+        $erreur = $msg_erreur_generique;
     }
 }
 ?>
@@ -527,9 +550,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
                         <?php echo ($type_actif === 'nni') ? 'Numéro National d\'Identité (NNI)' : 'Adresse e-mail'; ?>
                         <span class="req">*</span>
                     </label>
+                    <!-- ✔ CORRECTION #4 : placeholder 10 chiffres + validation HTML (maxlength + pattern) -->
                     <input type="text" name="identifiant" id="identifiant" class="form-input"
-                           placeholder="<?php echo ($type_actif === 'nni') ? 'Entrez vos 14 chiffres' : 'exemple@gestion-sang.mr'; ?>"
+                           placeholder="<?php echo ($type_actif === 'nni') ? 'Entrez vos 10 chiffres' : 'exemple@gestion-sang.mr'; ?>"
                            value="<?php echo htmlspecialchars($_POST['identifiant'] ?? ''); ?>"
+                           <?php if ($type_actif === 'nni'): ?>
+                               maxlength="10" pattern="\d{10}" inputmode="numeric"
+                               title="Le NNI doit contenir exactement 10 chiffres"
+                           <?php endif; ?>
                            autocomplete="off" required/>
                 </div>
 
@@ -572,18 +600,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
         document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
         event.target.classList.add('active');
 
-        // Mettre à jour le label + placeholder
+        // Mettre à jour le label + placeholder + attributs de validation
         const label = document.getElementById('label_id');
         const input = document.getElementById('identifiant');
 
         if (type === 'nni') {
             label.innerHTML = "Numéro National d'Identité (NNI) <span class='req'>*</span>";
-            input.placeholder = "Entrez vos 14 chiffres";
+            // ✔ CORRECTION #5 : placeholder JS aussi à 10 chiffres + validation
+            input.placeholder = "Entrez vos 10 chiffres";
             input.type = "text";
+            input.setAttribute('maxlength', '10');
+            input.setAttribute('pattern', '\\d{10}');
+            input.setAttribute('inputmode', 'numeric');
+            input.setAttribute('title', 'Le NNI doit contenir exactement 10 chiffres');
         } else {
             label.innerHTML = "Adresse e-mail <span class='req'>*</span>";
             input.placeholder = "exemple@gestion-sang.mr";
             input.type = "email";
+            input.removeAttribute('maxlength');
+            input.removeAttribute('pattern');
+            input.removeAttribute('inputmode');
+            input.removeAttribute('title');
         }
 
         input.value = "";

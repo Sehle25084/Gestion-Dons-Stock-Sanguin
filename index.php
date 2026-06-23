@@ -11,16 +11,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
     $identifiant  = trim($_POST['identifiant']);
     $mot_de_passe = $_POST['mot_de_passe'];
 
-    // ─── Message d'erreur générique pour ne pas révéler quels comptes existent ──
-    $msg_erreur_generique = "Identifiant ou mot de passe incorrect.";
-
     if (empty($identifiant) || empty($mot_de_passe)) {
         $erreur = "Veuillez remplir tous les champs.";
     }
     else if ($type_actif === 'nni') {
         // ══ Connexion DONNEUR (par NNI) ══
 
-        // ✔ CORRECTION #1 : Validation NNI = exactement 10 chiffres
+        // ✔ CORRECTION : Validation NNI = exactement 10 chiffres
         if (!preg_match('/^\d{10}$/', $identifiant)) {
             $erreur = "Le NNI doit contenir exactement 10 chiffres.";
         } else {
@@ -28,17 +25,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
             $stmt->execute([$identifiant]);
             $donneur = $stmt->fetch();
             if ($donneur && password_verify($mot_de_passe, $donneur['mot_de_passe'])) {
-
-                // ✔ CORRECTION #2 : régénération de l'ID de session (anti session-fixation)
                 session_regenerate_id(true);
-
                 $_SESSION['role'] = 'donneur';
                 $_SESSION['id']   = $donneur['id_donneur'];
                 $_SESSION['NNI']  = $donneur['NNI'];
                 header("Location: donneur/dashboard.php");
                 exit;
             }
-            $erreur = $msg_erreur_generique;
+            $erreur = "Identifiant ou mot de passe incorrect.";
         }
     }
     else {
@@ -59,114 +53,127 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
             exit;
         }
 
-        // 2. Banque de sang
-        $stmt = $pdo->prepare("SELECT * FROM banque_de_sang WHERE email = ?");
+        // 2. Banque de sang — Connexion via `utilisateur_banque` (NOUVELLE ARCHITECTURE)
+        // ✔ NOUVEAU : on ne se connecte plus directement sur banque_de_sang mais via un compte utilisateur
+        //   (comme responsable_hopital et utilisateur_sous_banque). Une banque peut avoir plusieurs agents.
+        $stmt = $pdo->prepare("
+            SELECT u.id_utilisateur, u.id_banque, u.nom_complet, u.email AS user_email,
+                   u.mot_de_passe, u.telephone, u.statut,
+                   b.nom AS nom_banque, b.wilaya
+            FROM utilisateur_banque u
+            JOIN banque_de_sang b ON b.id_banque = u.id_banque
+            WHERE u.email = ?
+        ");
         $stmt->execute([$identifiant]);
-        $banque = $stmt->fetch();
-        if ($banque && password_verify($mot_de_passe, $banque['mot_de_passe'])) {
-            session_regenerate_id(true);
-            $_SESSION['role']  = 'banque';
-            $_SESSION['id']    = $banque['id_banque'];
-            $_SESSION['nom']   = $banque['nom'];
-            $_SESSION['email'] = $banque['email'];
-            header("Location: banque/dashboard.php");
-            exit;
+        $user_b = $stmt->fetch();
+
+        if ($user_b && password_verify($mot_de_passe, $user_b['mot_de_passe'])) {
+
+            // ✔ Vérifier que le compte est actif
+            if ($user_b['statut'] !== 'actif') {
+                $erreur = "Votre compte a été désactivé. Contactez votre administrateur.";
+            } else {
+                session_regenerate_id(true);
+                $_SESSION['role']          = 'banque';
+                // ID de l'utilisateur connecté (l'agent)
+                $_SESSION['id_utilisateur'] = $user_b['id_utilisateur'];
+                $_SESSION['nom_complet']    = $user_b['nom_complet'];
+                $_SESSION['email']          = $user_b['user_email'];
+                $_SESSION['telephone']      = $user_b['telephone'];
+                // ID et infos de la banque rattachée
+                $_SESSION['id_banque']      = $user_b['id_banque'];
+                $_SESSION['nom_banque']     = $user_b['nom_banque'];
+                $_SESSION['wilaya']         = $user_b['wilaya'];
+                // Compatibilité avec l'ancien code (les pages banque utilisent $_SESSION['id'] et ['nom'])
+                $_SESSION['id']             = $user_b['id_banque'];
+                $_SESSION['nom']            = $user_b['nom_banque'];
+                header("Location: banque/dashboard.php");
+                exit;
+            }
         }
 
-        // 3. Sous-banque
-        $stmt = $pdo->prepare("SELECT * FROM sous_banque WHERE email = ?");
+        // 3. Sous-banque — Connexion via `utilisateur_sous_banque` (NOUVELLE ARCHITECTURE)
+        // ✔ NOUVEAU : on ne se connecte plus directement sur sous_banque mais via un compte utilisateur
+        //   (comme responsable_hopital pour les hôpitaux). Une sous-banque peut avoir plusieurs agents.
+        $stmt = $pdo->prepare("
+            SELECT u.id_utilisateur, u.id_sous_banque, u.nom_complet, u.email AS user_email,
+                   u.mot_de_passe, u.statut,
+                   sb.nom AS nom_sb, sb.id_hopital, sb.id_banque_principale
+            FROM utilisateur_sous_banque u
+            JOIN sous_banque sb ON sb.id_sous_banque = u.id_sous_banque
+            WHERE u.email = ?
+        ");
         $stmt->execute([$identifiant]);
-        $sous_banque = $stmt->fetch();
-        if ($sous_banque && password_verify($mot_de_passe, $sous_banque['mot_de_passe'])) {
-            session_regenerate_id(true);
-            $_SESSION['role']                 = 'sous_banque';
-            $_SESSION['id']                   = $sous_banque['id_sous_banque'];
-            $_SESSION['id_sous_banque']       = $sous_banque['id_sous_banque'];
-            $_SESSION['nom']                  = $sous_banque['nom'];
-            $_SESSION['nom_sb']               = $sous_banque['nom'];
-            $_SESSION['user_nom']             = $sous_banque['nom'];
-            $_SESSION['email']                = $sous_banque['email'];
-            $_SESSION['id_hopital']           = $sous_banque['id_hopital'];
-            $_SESSION['id_banque_principale'] = $sous_banque['id_banque_principale'];
-            header("Location: sous_banque/dashboard.php");
-            exit;
+        $user_sb = $stmt->fetch();
+
+        if ($user_sb && password_verify($mot_de_passe, $user_sb['mot_de_passe'])) {
+
+            // ✔ Vérifier que le compte est actif
+            if ($user_sb['statut'] !== 'actif') {
+                $erreur = "Votre compte a été désactivé. Contactez votre administrateur.";
+            } else {
+                session_regenerate_id(true);
+                $_SESSION['role']                 = 'sous_banque';
+                // ID de l'utilisateur connecté (l'agent)
+                $_SESSION['id_utilisateur']       = $user_sb['id_utilisateur'];
+                $_SESSION['nom_complet']          = $user_sb['nom_complet'];
+                $_SESSION['email']                = $user_sb['user_email'];
+                // ID et infos de la sous-banque rattachée
+                $_SESSION['id_sous_banque']       = $user_sb['id_sous_banque'];
+                $_SESSION['nom_sb']               = $user_sb['nom_sb'];
+                $_SESSION['id_hopital']           = $user_sb['id_hopital'];
+                $_SESSION['id_banque_principale'] = $user_sb['id_banque_principale'];
+                // Compatibilité avec l'ancien code (au cas où certaines pages utilisent encore $_SESSION['id'])
+                $_SESSION['id']                   = $user_sb['id_sous_banque'];
+                $_SESSION['nom']                  = $user_sb['nom_sb'];
+                $_SESSION['user_nom']             = $user_sb['nom_complet'];
+                header("Location: sous_banque/dashboard.php");
+                exit;
+            }
         }
 
-        // 4. Hôpital / Responsable Hôpital
-        // Essayer d'abord la connexion directe par responsable_hopital
+        // 4. Hôpital — Connexion STRICTE via responsable_hopital uniquement
+        // (Le compte générique hôpital est désactivé pour des raisons de sécurité)
         $stmt = $pdo->prepare("SELECT * FROM responsable_hopital WHERE email = ?");
         $stmt->execute([$identifiant]);
         $responsable = $stmt->fetch();
 
         if ($responsable && password_verify($mot_de_passe, $responsable['mot_de_passe'])) {
-            // Récupérer les infos de l'hôpital associé
-            $stmtHop = $pdo->prepare("SELECT nom, id_banque FROM hopital WHERE id_hopital = ?");
+            session_regenerate_id(true);
+
+            // ✔ CORRECTION : récupérer les infos de l'hôpital + sa banque via sa sous-banque
+            //   (avant : on lisait hopital.id_banque qui était une anomalie structurelle)
+            //   Désormais, le lien vers la banque passe par sous_banque.id_banque_principale
+            $stmtHop = $pdo->prepare("
+                SELECT h.nom AS nom_hopital,
+                       sb.id_sous_banque,
+                       sb.nom AS nom_sous_banque,
+                       sb.id_banque_principale AS id_banque
+                FROM hopital h
+                LEFT JOIN sous_banque sb ON sb.id_hopital = h.id_hopital
+                WHERE h.id_hopital = ?
+            ");
             $stmtHop->execute([$responsable['id_hopital']]);
             $hopital = $stmtHop->fetch();
 
-            session_regenerate_id(true);
             $_SESSION['role']               = 'hopital';
             $_SESSION['id_hopital']         = $responsable['id_hopital'];
             $_SESSION['id_responsable']     = $responsable['id_responsable'];
             $_SESSION['nom_responsable']    = $responsable['nom'];
             $_SESSION['prenom_responsable'] = $responsable['prenom'];
             $_SESSION['poste_responsable']  = $responsable['poste'];
-            $_SESSION['nom_hopital']        = $hopital['nom'] ?? 'Hôpital';
+            $_SESSION['nom_hopital']        = $hopital['nom_hopital'] ?? 'Hôpital';
+            // ✔ id_banque = banque principale qui alimente la sous-banque de l'hôpital
+            //   (NULL si l'hôpital n'a pas encore de sous-banque rattachée)
             $_SESSION['id_banque']          = $hopital['id_banque'] ?? null;
+            $_SESSION['id_sous_banque']     = $hopital['id_sous_banque'] ?? null;
+            $_SESSION['nom_sous_banque']    = $hopital['nom_sous_banque'] ?? null;
             header("Location: hospital/dashboard.php");
             exit;
         }
+        
 
-        // Sinon, essayer via le compte hôpital global
-        $stmt = $pdo->prepare("SELECT * FROM hopital WHERE email = ?");
-        $stmt->execute([$identifiant]);
-        $hopital = $stmt->fetch();
-
-        if ($hopital && password_verify($mot_de_passe, $hopital['mot_de_passe'])) {
-
-            // Vérifier s'il y a déjà un responsable pour cet hôpital
-            $stmtResp = $pdo->prepare("SELECT * FROM responsable_hopital WHERE id_hopital = ? ORDER BY id_responsable ASC LIMIT 1");
-            $stmtResp->execute([$hopital['id_hopital']]);
-            $responsable = $stmtResp->fetch();
-
-            if (!$responsable) {
-                // ✔ CORRECTION #3 : on hashe le mot de passe EN CLAIR
-                //   (avant : on copiait le hash de hopital, créant un DOUBLE HASH
-                //    qui empêchait toute reconnexion future en tant que responsable)
-                $hash_propre = password_hash($mot_de_passe, PASSWORD_DEFAULT);
-
-                $insertResp = $pdo->prepare("
-                    INSERT INTO responsable_hopital (id_hopital, nom, prenom, email, telephone, mot_de_passe, poste)
-                    VALUES (?, 'Général', 'Responsable', ?, ?, ?, 'Direction')
-                ");
-                $insertResp->execute([
-                    $hopital['id_hopital'],
-                    $hopital['email'],
-                    $hopital['telephone'] ?: null,
-                    $hash_propre
-                ]);
-                $id_resp = $pdo->lastInsertId();
-
-                // Récupérer le responsable nouvellement créé
-                $stmtResp = $pdo->prepare("SELECT * FROM responsable_hopital WHERE id_responsable = ?");
-                $stmtResp->execute([$id_resp]);
-                $responsable = $stmtResp->fetch();
-            }
-
-            session_regenerate_id(true);
-            $_SESSION['role']               = 'hopital';
-            $_SESSION['id_hopital']         = $hopital['id_hopital'];
-            $_SESSION['id_responsable']     = $responsable['id_responsable'];
-            $_SESSION['nom_responsable']    = $responsable['nom'];
-            $_SESSION['prenom_responsable'] = $responsable['prenom'];
-            $_SESSION['poste_responsable']  = $responsable['poste'];
-            $_SESSION['nom_hopital']        = $hopital['nom'];
-            $_SESSION['id_banque']          = $hopital['id_banque'];
-            header("Location: hospital/dashboard.php");
-            exit;
-        }
-
-        $erreur = $msg_erreur_generique;
+        $erreur = "Identifiant ou mot de passe incorrect.";
     }
 }
 ?>
@@ -550,7 +557,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
                         <?php echo ($type_actif === 'nni') ? 'Numéro National d\'Identité (NNI)' : 'Adresse e-mail'; ?>
                         <span class="req">*</span>
                     </label>
-                    <!-- ✔ CORRECTION #4 : placeholder 10 chiffres + validation HTML (maxlength + pattern) -->
+                    <!-- ✔ CORRECTION : placeholder 10 chiffres + validation HTML (maxlength + pattern + inputmode) quand type=nni -->
                     <input type="text" name="identifiant" id="identifiant" class="form-input"
                            placeholder="<?php echo ($type_actif === 'nni') ? 'Entrez vos 10 chiffres' : 'exemple@gestion-sang.mr'; ?>"
                            value="<?php echo htmlspecialchars($_POST['identifiant'] ?? ''); ?>"
@@ -600,15 +607,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
         document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
         event.target.classList.add('active');
 
-        // Mettre à jour le label + placeholder + attributs de validation
+        // Mettre à jour le label + placeholder
         const label = document.getElementById('label_id');
         const input = document.getElementById('identifiant');
 
         if (type === 'nni') {
             label.innerHTML = "Numéro National d'Identité (NNI) <span class='req'>*</span>";
-            // ✔ CORRECTION #5 : placeholder JS aussi à 10 chiffres + validation
             input.placeholder = "Entrez vos 10 chiffres";
             input.type = "text";
+            // ✔ CORRECTION : ajouter les attributs de validation au passage en mode NNI
             input.setAttribute('maxlength', '10');
             input.setAttribute('pattern', '\\d{10}');
             input.setAttribute('inputmode', 'numeric');
@@ -617,6 +624,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
             label.innerHTML = "Adresse e-mail <span class='req'>*</span>";
             input.placeholder = "exemple@gestion-sang.mr";
             input.type = "email";
+            // ✔ CORRECTION : retirer les attributs NNI au passage en mode email
             input.removeAttribute('maxlength');
             input.removeAttribute('pattern');
             input.removeAttribute('inputmode');

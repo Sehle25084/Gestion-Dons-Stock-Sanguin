@@ -17,6 +17,14 @@ if (isset($_POST['verifier_identite'])) {
     if (empty($nni) || empty($date_naissance)) {
         $erreur = "Veuillez remplir le NNI ET la date de naissance.";
         $etape  = 1;
+    } elseif (!preg_match('/^\d{10}$/', $nni)) {
+        $erreur = "Le NNI doit contenir exactement 10 chiffres.";
+        $etape  = 1;
+    }
+    // ✔ CORRECTION : Vérification de l'âge minimum (18 ans pour donner son sang)
+    elseif ((new DateTime($date_naissance))->diff(new DateTime())->y < 18) {
+        $erreur = "Vous devez avoir au moins 18 ans pour vous inscrire comme donneur.";
+        $etape  = 1;
     } else {
         // Vérification CROISÉE : NNI + date_naissance doivent correspondre (confidentialité)
         $stmt = $pdo_registre->prepare("SELECT * FROM citoyen WHERE NNI = ? AND date_naissance = ?");
@@ -62,8 +70,22 @@ if (isset($_POST['creer_compte'])) {
         $erreur = "Identité non vérifiée. Veuillez recommencer.";
         $etape  = 1;
     }
+    elseif (!preg_match('/^\d{10}$/', $nni)) {
+        $erreur = "Le NNI doit contenir exactement 10 chiffres.";
+        $etape  = 1;
+    }
     elseif (empty($email) && empty($telephone)) {
         $erreur = "Veuillez saisir au moins un email OU un numéro de téléphone.";
+        $etape  = 2;
+    }
+    // ✔ CORRECTION : Validation email serveur (filter_var)
+    elseif (!empty($email) && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $erreur = "Adresse email invalide.";
+        $etape  = 2;
+    }
+    // ✔ CORRECTION : Validation téléphone (format mauritanien : 8 chiffres ou +222XXXXXXXX)
+    elseif (!empty($telephone) && !preg_match('/^(\+222\s?)?\d{8}$/', preg_replace('/\s+/', '', $telephone))) {
+        $erreur = "Numéro de téléphone invalide (format attendu : 8 chiffres ou +222XXXXXXXX).";
         $etape  = 2;
     }
     elseif (strlen($mot_de_passe) < 6) {
@@ -75,34 +97,62 @@ if (isset($_POST['creer_compte'])) {
         $etape  = 2;
     }
     else {
-        // Vérifier qu'aucun compte n'existe déjà
-        $stmt = $pdo->prepare("SELECT * FROM donneur WHERE NNI = ?");
-        $stmt->execute([$nni]);
-        if ($stmt->fetch()) {
-            $erreur = "Un compte existe déjà avec ce NNI.";
-            $etape  = 2;
-        } else {
+        // ✔ CORRECTION : Vérification unicité email AVANT insertion (contrainte UNIQUE en DB)
+        if (!empty($email)) {
+            $stmt = $pdo->prepare("SELECT 1 FROM donneur WHERE email = ?");
+            $stmt->execute([$email]);
+            if ($stmt->fetch()) {
+                $erreur = "Un compte existe déjà avec cet email.";
+                $etape  = 2;
+            }
+        }
+
+        // Vérifier qu'aucun compte n'existe déjà avec ce NNI
+        if (!$erreur) {
+            $stmt = $pdo->prepare("SELECT 1 FROM donneur WHERE NNI = ?");
+            $stmt->execute([$nni]);
+            if ($stmt->fetch()) {
+                $erreur = "Un compte existe déjà avec ce NNI.";
+                $etape  = 2;
+            }
+        }
+
+        // ✔ CORRECTION : Validation que id_groupe (si fourni) correspond bien à un groupe existant
+        $id_groupe_valide = null;
+        if (!empty($id_groupe)) {
+            $stmt = $pdo->prepare("SELECT id_groupe FROM groupe_sanguin WHERE id_groupe = ?");
+            $stmt->execute([$id_groupe]);
+            if ($stmt->fetch()) {
+                $id_groupe_valide = (int)$id_groupe;
+            }
+        }
+
+        if (!$erreur) {
             $hash = password_hash($mot_de_passe, PASSWORD_DEFAULT);
 
-            // Insertion : le groupe est auto-déclaré, marqué NON CONFIRMÉ
-            // Selon le doc pi.docx : le groupe ne sera confirmé que par la banque/sous-banque
-            // Pour l'instant, on stocke dans id_groupe MAIS ce groupe est considéré
-            // comme "auto-déclaré" jusqu'à confirmation. Quand la colonne `groupe_auto_declare`
-            // sera ajoutée à la table, on pourra séparer les deux.
+            // ✔ CORRECTION (BUG MAJEUR) : on insère bien dans `groupe_auto_declare`
+            //   (avant : groupe perdu car id_groupe=NULL et groupe_auto_declare jamais rempli ;
+            //    seule une session temporaire le retenait, perdue à la fermeture du navigateur)
+            //   id_groupe restera NULL tant que la banque n'aura pas confirmé par analyse
+            //
+            // ✔ NOUVEAU : identite_verifiee = 1 dès l'inscription
+            //   L'identité du donneur EST vérifiée à ce stade car :
+            //     - NNI saisi par le donneur
+            //     - Date de naissance saisie par le donneur
+            //     - Les 2 correspondent dans le registre national (vérif. croisée à l'étape 1)
+            //   Donc l'identité civile est confirmée. Seul reste à confirmer
+            //   le GROUPE SANGUIN par analyse (champ groupe_confirme = 0).
             $stmt = $pdo->prepare("
-                INSERT INTO donneur (NNI, id_groupe, email, telephone, mot_de_passe)
-                VALUES (?, NULL, ?, ?, ?)
+                INSERT INTO donneur (NNI, id_groupe, groupe_auto_declare, email, telephone, mot_de_passe, groupe_confirme, identite_verifiee)
+                VALUES (?, NULL, ?, ?, ?, ?, 0, 1)
             ");
             $stmt->execute([
                 $nni,
+                $id_groupe_valide,
                 $email ?: null,
                 $telephone ?: null,
                 $hash
             ]);
-
-            // Si un groupe a été saisi, on le stocke à part dans une note temporaire
-            // (à intégrer proprement quand la colonne groupe_auto_declare sera ajoutée)
-            $_SESSION['groupe_auto_declare_temp'] = $id_groupe ?: null;
 
             $success = "Compte créé avec succès ! Vous pouvez maintenant vous connecter.";
             $etape   = 3; // Étape succès
@@ -530,7 +580,7 @@ $groupes = $pdo->query("SELECT * FROM groupe_sanguin ORDER BY libelle")->fetchAl
             <div class="alerte-success">
                 ✅ <?php echo htmlspecialchars($success); ?>
                 <br><br>
-                <strong>📌 Important :</strong> Votre groupe sanguin sera confirmé par la banque de sang ou la sous-banque après analyse.
+                <strong>📌 Important :</strong> Votre groupe sanguin sera confirmé par la banque de sang après analyse.
             </div>
 
             <a href="index.php" style="text-decoration: none;">
@@ -559,8 +609,9 @@ $groupes = $pdo->query("SELECT * FROM groupe_sanguin ORDER BY libelle")->fetchAl
                             NNI — Numéro National d'Identité <span class="req">*</span>
                         </label>
                         <input type="text" name="nni" class="form-input"
-                               placeholder="Entrez vos 14 chiffres"
+                               placeholder="Entrez vos 10 chiffres"
                                value="<?php echo htmlspecialchars($_POST['nni'] ?? ''); ?>"
+                               maxlength="10" pattern="\d{10}" inputmode="numeric" title="Le NNI doit contenir exactement 10 chiffres"
                                autocomplete="off" required/>
                     </div>
 
@@ -568,8 +619,10 @@ $groupes = $pdo->query("SELECT * FROM groupe_sanguin ORDER BY libelle")->fetchAl
                         <label class="form-label">
                             Date de naissance <span class="req">*</span>
                         </label>
+                        <!-- ✔ CORRECTION : max = date d'aujourd'hui - 18 ans (impossible de saisir < 18 ans) -->
                         <input type="date" name="date_naissance" class="form-input"
                                value="<?php echo htmlspecialchars($_POST['date_naissance'] ?? ''); ?>"
+                               max="<?php echo date('Y-m-d', strtotime('-18 years')); ?>"
                                required/>
                     </div>
 
@@ -660,14 +713,14 @@ $groupes = $pdo->query("SELECT * FROM groupe_sanguin ORDER BY libelle")->fetchAl
                                 Mot de passe <span class="req">*</span>
                             </label>
                             <input type="password" name="mot_de_passe" class="form-input"
-                                   placeholder="Minimum 6 caractères" required/>
+                                   placeholder="Minimum 6 caractères" minlength="6" required/>
                         </div>
                         <div class="form-group">
                             <label class="form-label">
                                 Confirmation <span class="req">*</span>
                             </label>
                             <input type="password" name="confirmation" class="form-input"
-                                   placeholder="Retapez le mot de passe" required/>
+                                   placeholder="Retapez le mot de passe" minlength="6" required/>
                         </div>
                     </div>
 

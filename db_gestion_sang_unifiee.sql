@@ -2,10 +2,10 @@
 -- version 5.2.3
 -- https://www.phpmyadmin.net/
 --
--- Host: 127.0.0.1:3306
--- Generation Time: Jun 20, 2026 at 08:41 PM
--- Server version: 8.4.7
--- PHP Version: 8.3.28
+-- Hôte : 127.0.0.1:3306
+-- Généré le : mar. 23 juin 2026 à 20:55
+-- Version du serveur : 8.4.7
+-- Version de PHP : 8.3.28
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
@@ -18,13 +18,13 @@ SET time_zone = "+00:00";
 /*!40101 SET NAMES utf8mb4 */;
 
 --
--- Database: `db_gestion_sang_pi2`
+-- Base de données : `db_gestion_sang_pi2`
 --
 
 -- --------------------------------------------------------
 
 --
--- Table structure for table `administrateur`
+-- Structure de la table `administrateur`
 --
 
 DROP TABLE IF EXISTS `administrateur`;
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS `administrateur` (
 ) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
--- Dumping data for table `administrateur`
+-- Déchargement des données de la table `administrateur`
 --
 
 INSERT INTO `administrateur` (`id_admin`, `nom`, `prenom`, `email`, `mot_de_passe`, `telephone`) VALUES
@@ -49,7 +49,7 @@ INSERT INTO `administrateur` (`id_admin`, `nom`, `prenom`, `email`, `mot_de_pass
 -- --------------------------------------------------------
 
 --
--- Table structure for table `alerte_stock`
+-- Structure de la table `alerte_stock`
 --
 
 DROP TABLE IF EXISTS `alerte_stock`;
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS `alerte_stock` (
 -- --------------------------------------------------------
 
 --
--- Table structure for table `analyse_sang`
+-- Structure de la table `analyse_sang`
 --
 
 DROP TABLE IF EXISTS `analyse_sang`;
@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS `analyse_sang` (
 -- --------------------------------------------------------
 
 --
--- Table structure for table `banque_de_sang`
+-- Structure de la table `banque_de_sang`
 --
 
 DROP TABLE IF EXISTS `banque_de_sang`;
@@ -110,24 +110,25 @@ CREATE TABLE IF NOT EXISTS `banque_de_sang` (
   `id_banque` int NOT NULL AUTO_INCREMENT,
   `nom` varchar(150) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `wilaya` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `adresse` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `telephone` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `email` varchar(150) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `mot_de_passe` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   PRIMARY KEY (`id_banque`),
   UNIQUE KEY `uq_banque_email` (`email`)
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
--- Dumping data for table `banque_de_sang`
+-- Déchargement des données de la table `banque_de_sang`
 --
 
-INSERT INTO `banque_de_sang` (`id_banque`, `nom`, `wilaya`, `telephone`, `email`, `mot_de_passe`) VALUES
-(3, 'test', 'test', '00000000', 'test@test.mr', '$2y$10$jdjwEiSQnp0.AfYwABnDc.OQio/XmjBQ4.zK5N20hF4H518FzInIC');
+INSERT INTO `banque_de_sang` (`id_banque`, `nom`, `wilaya`, `adresse`, `telephone`, `email`, `mot_de_passe`) VALUES
+(5, 'CNTS Nouakchott', 'Nouakchott Ouest', 'Avenue Gamal Abdel Nasser', '+22245242180', 'CNTS@banque.mr', '$2y$10$tklLoABLW0RxDRPCtnRzQ.Y95cj67RwXzD5SlOk4pFM5vIP0VnKUm');
 
 -- --------------------------------------------------------
 
 --
--- Table structure for table `chat`
+-- Structure de la table `chat`
 --
 
 DROP TABLE IF EXISTS `chat`;
@@ -145,7 +146,7 @@ CREATE TABLE IF NOT EXISTS `chat` (
 -- --------------------------------------------------------
 
 --
--- Table structure for table `demande`
+-- Structure de la table `demande`
 --
 
 DROP TABLE IF EXISTS `demande`;
@@ -168,21 +169,12 @@ CREATE TABLE IF NOT EXISTS `demande` (
   KEY `idx_demande_banque` (`id_banque`),
   KEY `fk_demande_groupe` (`id_groupe`),
   KEY `fk_demande_sous_banque` (`id_sous_banque`)
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
---
--- Dumping data for table `demande`
---
-
-INSERT INTO `demande` (`id_demande`, `id_hopital`, `id_sous_banque`, `id_banque`, `id_groupe`, `quantite_demandee`, `date_demande`, `date_reponse`, `statut`, `type_demande`, `note`, `urgence`, `date_souhaitee`) VALUES
-(1, 2, NULL, 3, 8, 2.00, '2026-05-07', '2026-05-07', 'acceptée', 'interne', NULL, 0, NULL),
-(2, 3, 2, NULL, 5, 1.00, '2026-06-19', '2026-06-19', 'refusée', 'interne', ' | Refus automatique : stock insuffisant (0 disponible(s))', 0, NULL),
-(3, 3, 2, 3, 5, 6.00, '2026-06-19', NULL, 'en_attente', 'externe', 'Demande automatique — stock insuffisant pour répondre à l\'hôpital', 0, NULL);
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
 --
--- Table structure for table `don`
+-- Structure de la table `don`
 --
 
 DROP TABLE IF EXISTS `don`;
@@ -198,12 +190,12 @@ CREATE TABLE IF NOT EXISTS `don` (
   KEY `idx_don_donneur` (`id_donneur`),
   KEY `idx_don_banque` (`id_banque`),
   KEY `fk_don_groupe` (`id_groupe`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
 --
--- Table structure for table `donneur`
+-- Structure de la table `donneur`
 --
 
 DROP TABLE IF EXISTS `donneur`;
@@ -224,25 +216,19 @@ CREATE TABLE IF NOT EXISTS `donneur` (
   UNIQUE KEY `uq_donneur_email` (`email`),
   KEY `fk_donneur_groupe` (`id_groupe`),
   KEY `fk_donneur_groupe_auto` (`groupe_auto_declare`)
-) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
--- Dumping data for table `donneur`
+-- Déchargement des données de la table `donneur`
 --
 
 INSERT INTO `donneur` (`id_donneur`, `NNI`, `id_groupe`, `email`, `telephone`, `mot_de_passe`, `groupe_auto_declare`, `groupe_confirme`, `disponible`, `identite_verifiee`, `statut_compte`) VALUES
-(1, '0123456789', 8, 'zemraguisehle@gmail.com', '36050593', '$2y$10$VXl0GItJ4ntnZBkO13TMyuob01PyIzzXqS3iXXOvqeQEDBdb5Sudq', NULL, 0, 0, 0, 'actif'),
-(2, '1111111111', NULL, 'ahmed@gmail.com', '00000000', '$2y$10$xkIrREnCsNvhSF3Mg1cRqOuCti0SC92NSD9fkZyJUiKjew1VxseQe', NULL, 0, 0, 0, 'actif'),
-(3, '3333333333', NULL, 'meymohamed@gmail.com', '43326369', '$2y$10$gDMMaDk/z8nbucuKSkZjd.CdvhUOv/jjzYv40QduGInXalxr9v80S', NULL, 0, 0, 0, 'actif'),
-(4, '2222222222', NULL, 'FatimaMintAli@gmail.com', '22222222', '$2y$10$NJXHVwvTsK9Z6Hzxq4bJaeermttzgQVrNzRt76YN6yCSev3ZN0LVS', NULL, 0, 0, 0, 'actif'),
-(5, '4444444444', NULL, '25084@supnum.mr', '00000000', '$2y$10$4/ALds/Y0x14yx5I53npnOvOsxQgEMoWt0UfBZmoAtnBfqeUESB3a', NULL, 0, 0, 0, 'actif'),
-(6, '12341234', NULL, 'mariemahmd@gmai.com', '36315677', '$2y$10$u7GYinG7E9hmgyDOUgqfUebG3XGynJ8YXpeKm5B5PNumKr9/toyCW', NULL, 0, 0, 0, 'actif'),
-(7, '5555555555', 8, 'aicha@donneur.com', '21346678', '$2y$10$6M4FCwpeyPc1K8Qbt1C2KufRjRiLSxFSi6FGpodD/uajtxOwMFLy.', 8, 1, 0, 0, 'actif');
+(5, '0000153386', NULL, 'Moussa@gmail.com', '+22242242180', '$2y$10$geeTAJuTvidxxuNRIJALbeJwU7IPomwg4KjxvsvfYRUvciieAFbam', 1, 0, 0, 1, 'actif');
 
 -- --------------------------------------------------------
 
 --
--- Table structure for table `groupe_sanguin`
+-- Structure de la table `groupe_sanguin`
 --
 
 DROP TABLE IF EXISTS `groupe_sanguin`;
@@ -254,7 +240,7 @@ CREATE TABLE IF NOT EXISTS `groupe_sanguin` (
 ) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
--- Dumping data for table `groupe_sanguin`
+-- Déchargement des données de la table `groupe_sanguin`
 --
 
 INSERT INTO `groupe_sanguin` (`id_groupe`, `libelle`) VALUES
@@ -270,7 +256,7 @@ INSERT INTO `groupe_sanguin` (`id_groupe`, `libelle`) VALUES
 -- --------------------------------------------------------
 
 --
--- Table structure for table `historique_sous_banque`
+-- Structure de la table `historique_sous_banque`
 --
 
 DROP TABLE IF EXISTS `historique_sous_banque`;
@@ -288,23 +274,12 @@ CREATE TABLE IF NOT EXISTS `historique_sous_banque` (
   KEY `idx_hist_groupe` (`id_groupe`),
   KEY `idx_hist_type` (`type_action`),
   KEY `idx_hist_date` (`date_action`)
-) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Journal centralisé de toutes les actions de la sous-banque';
-
---
--- Dumping data for table `historique_sous_banque`
---
-
-INSERT INTO `historique_sous_banque` (`id_historique`, `id_sous_banque`, `id_groupe`, `type_action`, `quantite`, `description`, `id_utilisateur`, `date_action`) VALUES
-(1, 2, 1, 'entree_stock', 6, 'Réception de 6 pochettes A+ (2 lots) depuis la banque principale', NULL, '2026-06-19 23:36:39'),
-(2, 2, 8, 'entree_stock', 3, 'Réception de 3 pochettes O- depuis la banque principale', NULL, '2026-06-19 23:36:39'),
-(3, 2, 3, 'entree_stock', 5, 'Réception de 5 pochettes B+ depuis la banque principale', NULL, '2026-06-19 23:36:39'),
-(4, 2, 5, 'demande_recue_traitee', 1, 'Demande hôpital refusée : stock insuffisant pour 1 pochette(s) AB+ (0 disponible(s))', NULL, '2026-06-19 23:54:06'),
-(5, 2, 5, 'demande_envoyee', 6, 'Demande automatique envoyée à la banque principale : 6 pochette(s) AB+', NULL, '2026-06-19 23:54:06');
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Journal centralisé de toutes les actions de la sous-banque';
 
 -- --------------------------------------------------------
 
 --
--- Table structure for table `hopital`
+-- Structure de la table `hopital`
 --
 
 DROP TABLE IF EXISTS `hopital`;
@@ -315,25 +290,22 @@ CREATE TABLE IF NOT EXISTS `hopital` (
   `telephone` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `email` varchar(150) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `mot_de_passe` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `id_banque` int DEFAULT NULL COMMENT 'Lien vers la banque de sang affiliée',
   PRIMARY KEY (`id_hopital`),
-  UNIQUE KEY `uq_hopital_email` (`email`),
-  KEY `fk_hopital_banque` (`id_banque`)
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  UNIQUE KEY `uq_hopital_email` (`email`)
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
--- Dumping data for table `hopital`
+-- Déchargement des données de la table `hopital`
 --
 
-INSERT INTO `hopital` (`id_hopital`, `nom`, `wilaya`, `telephone`, `email`, `mot_de_passe`, `id_banque`) VALUES
-(1, 'chiffa', 'tvz', '33333333', 'opital@exemple.mr', '$2y$10$4DeB3OyhvKCPE0EH72.IQujEaj82Z0t85xZnaq43nI9hK3KP8pVbO', NULL),
-(2, 'A', 'A', '00000000', 'hopit@exemple.mr', '$2y$10$olkHOIaXTf5VBntFj4SZg.f2Mj3ZKp0ytCYY5hw03zwExqcDJuSmy', NULL),
-(3, 'ihssan', 'nktt', '36050593', 'ihssan@exemple.mr', '$2y$10$C6s/f3PLVW0gxjbmg2lN0e0QD.TNukdEPWb9csMzr7T8woM3RrCMe', NULL);
+INSERT INTO `hopital` (`id_hopital`, `nom`, `wilaya`, `telephone`, `email`, `mot_de_passe`) VALUES
+(3, 'Centre Hopitalier National', 'Nouakchott Ouest', '+22245257261', 'contacts@hopital.mr', '$2y$10$6qJg6c2Df2hucuWKNeQaPenQU/k9j2dyhtFMKgTY4EPFIkhweCeTW'),
+(4, 'Centre Hospitalier Mère et Enfant', 'Nouakchott Ouest', '+22222 11 48 53', 'CHME@hopital.mr', '$2y$10$0VZskC2IxgHsenBorsLe6uMLUfnF6SXy4cQbcKhhFhb45CtYW0oC.');
 
 -- --------------------------------------------------------
 
 --
--- Table structure for table `journal_hopital`
+-- Structure de la table `journal_hopital`
 --
 
 DROP TABLE IF EXISTS `journal_hopital`;
@@ -349,17 +321,10 @@ CREATE TABLE IF NOT EXISTS `journal_hopital` (
   KEY `fk_journal_responsable` (`id_responsable`)
 ) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
---
--- Dumping data for table `journal_hopital`
---
-
-INSERT INTO `journal_hopital` (`id_journal`, `id_hopital`, `id_responsable`, `action`, `details`, `date_action`) VALUES
-(1, 3, 1, 'demande_envoyee', 'Demande de 1 pochettes de AB+', '2026-06-19 23:32:34');
-
 -- --------------------------------------------------------
 
 --
--- Table structure for table `log_activite`
+-- Structure de la table `log_activite`
 --
 
 DROP TABLE IF EXISTS `log_activite`;
@@ -372,20 +337,27 @@ CREATE TABLE IF NOT EXISTS `log_activite` (
   PRIMARY KEY (`id_log`),
   KEY `idx_log_role` (`role_utilisateur`),
   KEY `idx_log_date` (`date_action`)
-) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
--- Dumping data for table `log_activite`
+-- Déchargement des données de la table `log_activite`
 --
 
 INSERT INTO `log_activite` (`id_log`, `role_utilisateur`, `id_utilisateur`, `action`, `date_action`) VALUES
-(1, 'admin', 1, 'Création hôpital : ihssan', '2026-06-19 23:30:31'),
-(2, 'admin', 1, 'Création sous-banque : sbanque', '2026-06-19 23:31:21');
+(1, 'admin', 1, 'Ajout sous-banque : Dépôt Cheikh Zayed (+ agent : Khadijetou Beyah)', '2026-06-22 08:27:59'),
+(2, 'admin', 1, 'Ajout banque : CNTS Nouakchott (+ agent : Khadijetou Beyah)', '2026-06-23 13:57:18'),
+(3, 'banque', 4, 'Ajout du don #1 (4 pochette(s))', '2026-06-23 14:19:06'),
+(4, 'banque', 4, 'Mise à jour stock — groupe #8 : 5 pochettes', '2026-06-23 14:22:17'),
+(5, 'banque', 4, 'Acceptation du don #1 (4.00 pochette(s) créée(s))', '2026-06-23 15:53:47'),
+(6, 'admin', 1, 'Ajout banque : CNTS Nouakchott (+ agent : Massi Ahmednah)', '2026-06-23 19:11:59'),
+(7, 'admin', 1, 'Création hôpital sécurisée : Centre Hopitalier National', '2026-06-23 19:18:39'),
+(8, 'admin', 1, 'Ajout sous-banque : Dépôt Cheikh Zayed (+ agent : Hayati Sbai)', '2026-06-23 19:21:41'),
+(9, 'admin', 1, 'Création hôpital sécurisée : Centre Hospitalier Mère et Enfant', '2026-06-23 19:31:33');
 
 -- --------------------------------------------------------
 
 --
--- Table structure for table `lot_sang_sous_banque`
+-- Structure de la table `lot_sang_sous_banque`
 --
 
 DROP TABLE IF EXISTS `lot_sang_sous_banque`;
@@ -405,22 +377,12 @@ CREATE TABLE IF NOT EXISTS `lot_sang_sous_banque` (
   KEY `idx_lot_groupe` (`id_groupe`),
   KEY `idx_lot_expiration` (`date_expiration`),
   KEY `idx_lot_statut` (`statut`)
-) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Gestion du stock sous-banque par lot, avec suivi de péremption';
-
---
--- Dumping data for table `lot_sang_sous_banque`
---
-
-INSERT INTO `lot_sang_sous_banque` (`id_lot`, `id_sous_banque`, `id_groupe`, `quantite`, `quantite_initiale`, `date_entree`, `date_expiration`, `origine`, `id_demande_origine`, `statut`) VALUES
-(1, 2, 1, 4, 4, '2026-06-19', '2026-07-24', 'banque_principale', NULL, 'disponible'),
-(2, 2, 1, 2, 2, '2026-05-20', '2026-06-23', 'banque_principale', NULL, 'disponible'),
-(3, 2, 8, 3, 3, '2026-05-16', '2026-06-20', 'banque_principale', NULL, 'disponible'),
-(4, 2, 3, 5, 5, '2026-06-19', '2026-07-29', 'banque_principale', NULL, 'disponible');
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Gestion du stock sous-banque par lot, avec suivi de péremption';
 
 -- --------------------------------------------------------
 
 --
--- Table structure for table `message_groupe`
+-- Structure de la table `message_groupe`
 --
 
 DROP TABLE IF EXISTS `message_groupe`;
@@ -435,18 +397,10 @@ CREATE TABLE IF NOT EXISTS `message_groupe` (
   KEY `idx_donneur` (`id_donneur`)
 ) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
---
--- Dumping data for table `message_groupe`
---
-
-INSERT INTO `message_groupe` (`id_message`, `id_groupe`, `id_donneur`, `contenu`, `date_envoi`) VALUES
-(1, 8, 1, 'NH KHHVLH', '2026-06-15 11:03:00'),
-(2, 8, 1, 'HIIJM', '2026-06-15 13:43:59');
-
 -- --------------------------------------------------------
 
 --
--- Table structure for table `mouvement_stock`
+-- Structure de la table `mouvement_stock`
 --
 
 DROP TABLE IF EXISTS `mouvement_stock`;
@@ -470,16 +424,33 @@ CREATE TABLE IF NOT EXISTS `mouvement_stock` (
 ) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
--- Dumping data for table `mouvement_stock`
+-- Déchargement des données de la table `mouvement_stock`
 --
 
 INSERT INTO `mouvement_stock` (`id_mouvement`, `id_sous_banque`, `id_banque`, `id_hopital`, `id_groupe`, `type_mouvement`, `quantite`, `date_mouvement`, `reference_demande`, `commentaire`) VALUES
-(1, NULL, 3, 2, 8, 'sortie', 2.00, '2026-05-07 00:00:00', 1, NULL);
+(1, NULL, NULL, NULL, 8, 'sortie', 2.00, '2026-05-07 00:00:00', 1, NULL);
 
 -- --------------------------------------------------------
 
 --
--- Table structure for table `notification_hopital`
+-- Structure de la table `notification`
+--
+
+DROP TABLE IF EXISTS `notification`;
+CREATE TABLE IF NOT EXISTS `notification` (
+  `id_notification` int NOT NULL AUTO_INCREMENT,
+  `type_destinataire` enum('donneur','banque','sous_banque','hopital','admin') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `id_destinataire` int NOT NULL,
+  `message` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `date_notification` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `lu` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id_notification`)
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Structure de la table `notification_hopital`
 --
 
 DROP TABLE IF EXISTS `notification_hopital`;
@@ -500,7 +471,46 @@ CREATE TABLE IF NOT EXISTS `notification_hopital` (
 -- --------------------------------------------------------
 
 --
--- Table structure for table `responsable_hopital`
+-- Structure de la table `poches_dechets`
+--
+
+DROP TABLE IF EXISTS `poches_dechets`;
+CREATE TABLE IF NOT EXISTS `poches_dechets` (
+  `id_dechet` int NOT NULL AUTO_INCREMENT,
+  `id_pochette` int NOT NULL,
+  `raison_rejet` varchar(255) NOT NULL,
+  `date_rejet` date NOT NULL DEFAULT (curdate()),
+  PRIMARY KEY (`id_dechet`),
+  KEY `id_pochette` (`id_pochette`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Structure de la table `pochette`
+--
+
+DROP TABLE IF EXISTS `pochette`;
+CREATE TABLE IF NOT EXISTS `pochette` (
+  `id_pochette` int NOT NULL AUTO_INCREMENT,
+  `id_don` int NOT NULL,
+  `id_groupe` int NOT NULL,
+  `id_banque` int NOT NULL,
+  `date_collecte` date NOT NULL,
+  `date_expiration` date NOT NULL,
+  `statut` enum('disponible','utilisee','expiree','detruite') DEFAULT 'disponible',
+  `code_pochette` varchar(50) DEFAULT NULL,
+  PRIMARY KEY (`id_pochette`),
+  UNIQUE KEY `code_pochette` (`code_pochette`),
+  KEY `fk_pochette_don` (`id_don`),
+  KEY `fk_pochette_banque` (`id_banque`),
+  KEY `fk_pochette_groupe` (`id_groupe`)
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Structure de la table `responsable_hopital`
 --
 
 DROP TABLE IF EXISTS `responsable_hopital`;
@@ -517,19 +527,20 @@ CREATE TABLE IF NOT EXISTS `responsable_hopital` (
   PRIMARY KEY (`id_responsable`),
   UNIQUE KEY `uq_responsable_email` (`email`),
   KEY `fk_responsable_hopital` (`id_hopital`)
-) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
--- Dumping data for table `responsable_hopital`
+-- Déchargement des données de la table `responsable_hopital`
 --
 
 INSERT INTO `responsable_hopital` (`id_responsable`, `id_hopital`, `nom`, `prenom`, `email`, `telephone`, `mot_de_passe`, `poste`, `date_creation`) VALUES
-(1, 3, 'Général', 'Responsable', 'ihssan@exemple.mr', '36050593', '$2y$10$C6s/f3PLVW0gxjbmg2lN0e0QD.TNukdEPWb9csMzr7T8woM3RrCMe', 'Direction', '2026-06-19 23:32:19');
+(2, 3, 'Mohamed Salem', 'Ahmed', 'Ahmed@hopital.mr', '+22236704490', '$2y$10$M0TdsE5uDDDybEVef7xF8eCKMiS.qHudY2Vh9OdLT3a19UdNSofcS', 'Directeur', '2026-06-23 19:18:39'),
+(3, 4, 'Beyah', 'Khadijetou', 'khadijetou@hopital.mr', '+22241429395', '$2y$10$0k5xTCos5N2gxgXZOsvGl.vaqCDjo4AnwqSjwdNhOm7FEK/8HnuKi', 'Directeur', '2026-06-23 19:31:33');
 
 -- --------------------------------------------------------
 
 --
--- Table structure for table `sous_banque`
+-- Structure de la table `sous_banque`
 --
 
 DROP TABLE IF EXISTS `sous_banque`;
@@ -544,27 +555,25 @@ CREATE TABLE IF NOT EXISTS `sous_banque` (
   PRIMARY KEY (`id_sous_banque`),
   KEY `fk_sb_banque` (`id_banque_principale`),
   KEY `fk_sb_hopital` (`id_hopital`)
-) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
--- Dumping data for table `sous_banque`
+-- Déchargement des données de la table `sous_banque`
 --
 
 INSERT INTO `sous_banque` (`id_sous_banque`, `nom`, `id_hopital`, `id_banque_principale`, `date_creation`, `email`, `mot_de_passe`) VALUES
-(1, 'Ma Nouvelle Sous-Banque', 1, 3, '2026-06-15', 'test@sousbanque.com', '$2y$10$Mv9uAGvn1YyrKX9Av55xfu4jxnlA4nS9AJfCVWKkPas8Eki5y.A.i'),
-(2, 'sbanque', 3, 3, '2026-06-19', 'sbanque@exemple.com', '$2y$10$TF6Iz7rNEeK0ZlL4rdvPluSTPazG3roosw7woubNaLiEXz1o9771G');
+(3, 'Dépôt Cheikh Zayed', 3, 5, '0000-00-00', 'cheikhzayed@sousbanque.mr', '$2y$10$pUte6dtZm9l3bJT3J/LHh.QAqnAmiiVfRGEAmEaPd6Ug2.iROlgcy');
 
 -- --------------------------------------------------------
 
 --
--- Table structure for table `stock`
+-- Structure de la table `stock`
 --
 
 DROP TABLE IF EXISTS `stock`;
 CREATE TABLE IF NOT EXISTS `stock` (
   `id_stock` int NOT NULL AUTO_INCREMENT,
   `id_banque` int NOT NULL,
-  `id_sous_banque` int DEFAULT NULL COMMENT 'NULL = stock de la banque principale',
   `id_groupe` int NOT NULL,
   `quantite_disponible` decimal(6,2) NOT NULL DEFAULT '0.00',
   `date_mise_a_jour` date NOT NULL,
@@ -572,14 +581,13 @@ CREATE TABLE IF NOT EXISTS `stock` (
   `seuil_alerte` decimal(6,2) NOT NULL DEFAULT '2.00' COMMENT 'Seuil minimal avant alerte',
   PRIMARY KEY (`id_stock`),
   KEY `idx_stock_banque` (`id_banque`),
-  KEY `fk_stock_groupe` (`id_groupe`),
-  KEY `fk_stock_sous_banque` (`id_sous_banque`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  KEY `fk_stock_groupe` (`id_groupe`)
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
 --
--- Table structure for table `stock_sous_banque`
+-- Structure de la table `stock_sous_banque`
 --
 
 DROP TABLE IF EXISTS `stock_sous_banque`;
@@ -593,21 +601,40 @@ CREATE TABLE IF NOT EXISTS `stock_sous_banque` (
   PRIMARY KEY (`id_stock_sb`),
   UNIQUE KEY `uq_sb_groupe` (`id_sous_banque`,`id_groupe`),
   KEY `fk_ssb_groupe` (`id_groupe`)
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
---
--- Dumping data for table `stock_sous_banque`
---
-
-INSERT INTO `stock_sous_banque` (`id_stock_sb`, `id_sous_banque`, `id_groupe`, `quantite_disponible`, `seuil_alerte`, `date_mise_a_jour`) VALUES
-(1, 2, 1, 6, 3, '2026-06-19 00:00:00'),
-(2, 2, 8, 3, 3, '2026-06-19 00:00:00'),
-(3, 2, 3, 5, 3, '2026-06-19 00:00:00');
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
 --
--- Table structure for table `utilisateur_sous_banque`
+-- Structure de la table `utilisateur_banque`
+--
+
+DROP TABLE IF EXISTS `utilisateur_banque`;
+CREATE TABLE IF NOT EXISTS `utilisateur_banque` (
+  `id_utilisateur` int NOT NULL AUTO_INCREMENT,
+  `id_banque` int NOT NULL,
+  `nom_complet` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `email` varchar(150) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `mot_de_passe` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `telephone` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `statut` enum('actif','inactif') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'actif',
+  `date_creation` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_utilisateur`),
+  UNIQUE KEY `uq_ub_email` (`email`),
+  KEY `fk_ub_banque` (`id_banque`)
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Déchargement des données de la table `utilisateur_banque`
+--
+
+INSERT INTO `utilisateur_banque` (`id_utilisateur`, `id_banque`, `nom_complet`, `email`, `mot_de_passe`, `telephone`, `statut`, `date_creation`) VALUES
+(2, 5, 'Massi Ahmednah', 'Massi@banque.mr', '$2y$10$JEJsH8KG8kaZEr8eOR//WeIgtH9.qkrpfpLH4I7BdWiSg4KhGNBbm', '+22243245695', 'actif', '2026-06-23 19:11:59');
+
+-- --------------------------------------------------------
+
+--
+-- Structure de la table `utilisateur_sous_banque`
 --
 
 DROP TABLE IF EXISTS `utilisateur_sous_banque`;
@@ -622,21 +649,28 @@ CREATE TABLE IF NOT EXISTS `utilisateur_sous_banque` (
   PRIMARY KEY (`id_utilisateur`),
   UNIQUE KEY `uq_usb_login` (`login`),
   KEY `fk_usb_sous_banque` (`id_sous_banque`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
--- Constraints for dumped tables
+-- Déchargement des données de la table `utilisateur_sous_banque`
+--
+
+INSERT INTO `utilisateur_sous_banque` (`id_utilisateur`, `id_sous_banque`, `nom_complet`, `login`, `mot_de_passe`, `email`, `statut`) VALUES
+(2, 3, 'Hayati Sbai', 'Hayati@sousbanque.mr', '$2y$10$PvohqOMLQvFxFkbBeuDh8ul8w2Cy82pthoeObogIfeFt2RadxiXFO', 'Hayati@sousbanque.mr', 'actif');
+
+--
+-- Contraintes pour les tables déchargées
 --
 
 --
--- Constraints for table `alerte_stock`
+-- Contraintes pour la table `alerte_stock`
 --
 ALTER TABLE `alerte_stock`
   ADD CONSTRAINT `fk_alerte_groupe` FOREIGN KEY (`id_groupe`) REFERENCES `groupe_sanguin` (`id_groupe`) ON DELETE RESTRICT ON UPDATE CASCADE,
   ADD CONSTRAINT `fk_alerte_sous_banque` FOREIGN KEY (`id_sous_banque`) REFERENCES `sous_banque` (`id_sous_banque`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 --
--- Constraints for table `analyse_sang`
+-- Contraintes pour la table `analyse_sang`
 --
 ALTER TABLE `analyse_sang`
   ADD CONSTRAINT `fk_analyse_banque` FOREIGN KEY (`id_banque`) REFERENCES `banque_de_sang` (`id_banque`) ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -644,14 +678,14 @@ ALTER TABLE `analyse_sang`
   ADD CONSTRAINT `fk_analyse_groupe` FOREIGN KEY (`groupe_confirme`) REFERENCES `groupe_sanguin` (`id_groupe`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 --
--- Constraints for table `chat`
+-- Contraintes pour la table `chat`
 --
 ALTER TABLE `chat`
   ADD CONSTRAINT `fk_chat_donneur` FOREIGN KEY (`id_donneur`) REFERENCES `donneur` (`id_donneur`) ON DELETE CASCADE ON UPDATE CASCADE,
   ADD CONSTRAINT `fk_chat_groupe` FOREIGN KEY (`id_groupe`) REFERENCES `groupe_sanguin` (`id_groupe`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 --
--- Constraints for table `demande`
+-- Contraintes pour la table `demande`
 --
 ALTER TABLE `demande`
   ADD CONSTRAINT `fk_demande_banque` FOREIGN KEY (`id_banque`) REFERENCES `banque_de_sang` (`id_banque`) ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -660,7 +694,7 @@ ALTER TABLE `demande`
   ADD CONSTRAINT `fk_demande_sous_banque` FOREIGN KEY (`id_sous_banque`) REFERENCES `sous_banque` (`id_sous_banque`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 --
--- Constraints for table `don`
+-- Contraintes pour la table `don`
 --
 ALTER TABLE `don`
   ADD CONSTRAINT `fk_don_banque` FOREIGN KEY (`id_banque`) REFERENCES `banque_de_sang` (`id_banque`) ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -668,48 +702,42 @@ ALTER TABLE `don`
   ADD CONSTRAINT `fk_don_groupe` FOREIGN KEY (`id_groupe`) REFERENCES `groupe_sanguin` (`id_groupe`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 --
--- Constraints for table `donneur`
+-- Contraintes pour la table `donneur`
 --
 ALTER TABLE `donneur`
   ADD CONSTRAINT `fk_donneur_groupe` FOREIGN KEY (`id_groupe`) REFERENCES `groupe_sanguin` (`id_groupe`) ON DELETE RESTRICT ON UPDATE CASCADE,
   ADD CONSTRAINT `fk_donneur_groupe_auto` FOREIGN KEY (`groupe_auto_declare`) REFERENCES `groupe_sanguin` (`id_groupe`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 --
--- Constraints for table `historique_sous_banque`
+-- Contraintes pour la table `historique_sous_banque`
 --
 ALTER TABLE `historique_sous_banque`
   ADD CONSTRAINT `fk_hist_groupe` FOREIGN KEY (`id_groupe`) REFERENCES `groupe_sanguin` (`id_groupe`) ON DELETE SET NULL ON UPDATE CASCADE,
   ADD CONSTRAINT `fk_hist_sous_banque` FOREIGN KEY (`id_sous_banque`) REFERENCES `sous_banque` (`id_sous_banque`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 --
--- Constraints for table `hopital`
---
-ALTER TABLE `hopital`
-  ADD CONSTRAINT `fk_hopital_banque` FOREIGN KEY (`id_banque`) REFERENCES `banque_de_sang` (`id_banque`) ON DELETE SET NULL ON UPDATE CASCADE;
-
---
--- Constraints for table `journal_hopital`
+-- Contraintes pour la table `journal_hopital`
 --
 ALTER TABLE `journal_hopital`
   ADD CONSTRAINT `fk_journal_hopital` FOREIGN KEY (`id_hopital`) REFERENCES `hopital` (`id_hopital`) ON DELETE CASCADE ON UPDATE CASCADE,
   ADD CONSTRAINT `fk_journal_responsable` FOREIGN KEY (`id_responsable`) REFERENCES `responsable_hopital` (`id_responsable`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 --
--- Constraints for table `lot_sang_sous_banque`
+-- Contraintes pour la table `lot_sang_sous_banque`
 --
 ALTER TABLE `lot_sang_sous_banque`
   ADD CONSTRAINT `fk_lot_groupe` FOREIGN KEY (`id_groupe`) REFERENCES `groupe_sanguin` (`id_groupe`) ON DELETE RESTRICT ON UPDATE CASCADE,
   ADD CONSTRAINT `fk_lot_sous_banque` FOREIGN KEY (`id_sous_banque`) REFERENCES `sous_banque` (`id_sous_banque`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 --
--- Constraints for table `message_groupe`
+-- Contraintes pour la table `message_groupe`
 --
 ALTER TABLE `message_groupe`
   ADD CONSTRAINT `fk_msg_donneur` FOREIGN KEY (`id_donneur`) REFERENCES `donneur` (`id_donneur`) ON DELETE CASCADE ON UPDATE CASCADE,
   ADD CONSTRAINT `fk_msg_groupe` FOREIGN KEY (`id_groupe`) REFERENCES `groupe_sanguin` (`id_groupe`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 --
--- Constraints for table `mouvement_stock`
+-- Contraintes pour la table `mouvement_stock`
 --
 ALTER TABLE `mouvement_stock`
   ADD CONSTRAINT `fk_mvt_banque` FOREIGN KEY (`id_banque`) REFERENCES `banque_de_sang` (`id_banque`) ON DELETE SET NULL ON UPDATE CASCADE,
@@ -718,42 +746,64 @@ ALTER TABLE `mouvement_stock`
   ADD CONSTRAINT `fk_mvt_sous_banque` FOREIGN KEY (`id_sous_banque`) REFERENCES `sous_banque` (`id_sous_banque`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 --
--- Constraints for table `notification_hopital`
+-- Contraintes pour la table `notification_hopital`
 --
 ALTER TABLE `notification_hopital`
   ADD CONSTRAINT `fk_notif_hopital` FOREIGN KEY (`id_hopital`) REFERENCES `hopital` (`id_hopital`) ON DELETE CASCADE ON UPDATE CASCADE,
   ADD CONSTRAINT `fk_notif_responsable` FOREIGN KEY (`id_responsable`) REFERENCES `responsable_hopital` (`id_responsable`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 --
--- Constraints for table `responsable_hopital`
+-- Contraintes pour la table `poches_dechets`
+--
+ALTER TABLE `poches_dechets`
+  ADD CONSTRAINT `poches_dechets_ibfk_1` FOREIGN KEY (`id_pochette`) REFERENCES `pochette` (`id_pochette`);
+
+--
+-- Contraintes pour la table `pochette`
+--
+ALTER TABLE `pochette`
+  ADD CONSTRAINT `fk_pochette_banque` FOREIGN KEY (`id_banque`) REFERENCES `banque_de_sang` (`id_banque`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  ADD CONSTRAINT `fk_pochette_don` FOREIGN KEY (`id_don`) REFERENCES `don` (`id_don`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `fk_pochette_groupe` FOREIGN KEY (`id_groupe`) REFERENCES `groupe_sanguin` (`id_groupe`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  ADD CONSTRAINT `pochette_ibfk_1` FOREIGN KEY (`id_don`) REFERENCES `don` (`id_don`),
+  ADD CONSTRAINT `pochette_ibfk_2` FOREIGN KEY (`id_groupe`) REFERENCES `groupe_sanguin` (`id_groupe`),
+  ADD CONSTRAINT `pochette_ibfk_3` FOREIGN KEY (`id_banque`) REFERENCES `banque_de_sang` (`id_banque`);
+
+--
+-- Contraintes pour la table `responsable_hopital`
 --
 ALTER TABLE `responsable_hopital`
   ADD CONSTRAINT `fk_responsable_hopital` FOREIGN KEY (`id_hopital`) REFERENCES `hopital` (`id_hopital`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 --
--- Constraints for table `sous_banque`
+-- Contraintes pour la table `sous_banque`
 --
 ALTER TABLE `sous_banque`
   ADD CONSTRAINT `fk_sb_banque` FOREIGN KEY (`id_banque_principale`) REFERENCES `banque_de_sang` (`id_banque`) ON DELETE RESTRICT ON UPDATE CASCADE,
   ADD CONSTRAINT `fk_sb_hopital` FOREIGN KEY (`id_hopital`) REFERENCES `hopital` (`id_hopital`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 --
--- Constraints for table `stock`
+-- Contraintes pour la table `stock`
 --
 ALTER TABLE `stock`
   ADD CONSTRAINT `fk_stock_banque` FOREIGN KEY (`id_banque`) REFERENCES `banque_de_sang` (`id_banque`) ON DELETE RESTRICT ON UPDATE CASCADE,
-  ADD CONSTRAINT `fk_stock_groupe` FOREIGN KEY (`id_groupe`) REFERENCES `groupe_sanguin` (`id_groupe`) ON DELETE RESTRICT ON UPDATE CASCADE,
-  ADD CONSTRAINT `fk_stock_sous_banque` FOREIGN KEY (`id_sous_banque`) REFERENCES `sous_banque` (`id_sous_banque`) ON DELETE SET NULL ON UPDATE CASCADE;
+  ADD CONSTRAINT `fk_stock_groupe` FOREIGN KEY (`id_groupe`) REFERENCES `groupe_sanguin` (`id_groupe`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 --
--- Constraints for table `stock_sous_banque`
+-- Contraintes pour la table `stock_sous_banque`
 --
 ALTER TABLE `stock_sous_banque`
   ADD CONSTRAINT `fk_ssb_groupe` FOREIGN KEY (`id_groupe`) REFERENCES `groupe_sanguin` (`id_groupe`) ON DELETE RESTRICT ON UPDATE CASCADE,
   ADD CONSTRAINT `fk_ssb_sous_banque` FOREIGN KEY (`id_sous_banque`) REFERENCES `sous_banque` (`id_sous_banque`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 --
--- Constraints for table `utilisateur_sous_banque`
+-- Contraintes pour la table `utilisateur_banque`
+--
+ALTER TABLE `utilisateur_banque`
+  ADD CONSTRAINT `fk_ub_banque` FOREIGN KEY (`id_banque`) REFERENCES `banque_de_sang` (`id_banque`) ON DELETE CASCADE;
+
+--
+-- Contraintes pour la table `utilisateur_sous_banque`
 --
 ALTER TABLE `utilisateur_sous_banque`
   ADD CONSTRAINT `fk_usb_sous_banque` FOREIGN KEY (`id_sous_banque`) REFERENCES `sous_banque` (`id_sous_banque`) ON DELETE CASCADE ON UPDATE CASCADE;

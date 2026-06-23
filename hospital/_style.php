@@ -1,7 +1,7 @@
 <?php
 // ════════════════════════════════════════════════════
-// E-SANG — Styles partagés ADMIN
-// Inclure AVANT sidebar.php dans chaque page admin
+// E-SANG — Styles partagés HÔPITAL
+// Inclure AVANT sidebar.php dans chaque page hôpital
 // Usage : require_once '_style.php'; puis utiliser $shared_css
 // ════════════════════════════════════════════════════
 $shared_css = <<<'CSS'
@@ -13,7 +13,7 @@ body {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     background: #FAFAFA;
     color: #111111;
-    font-size: 15px;
+    font-size: 14px;
     line-height: 1.5;
     display: flex;
     min-height: 100vh;
@@ -23,7 +23,7 @@ body {
    SIDEBAR
    ══════════════════════════════════════ */
 .sidebar {
-    width: 270px; min-width: 270px;
+    width: 250px; min-width: 250px;
     background: #FFFFFF;
     border-right: 2px solid #E5E7EB;
     display: flex; flex-direction: column;
@@ -38,8 +38,8 @@ body {
 }
 
 .sidebar-nav {
-    flex: 1; padding: 14px 14px;
-    display: flex; flex-direction: column; gap: 5px;
+    flex: 1; padding: 12px 12px;
+    display: flex; flex-direction: column; gap: 4px;
     overflow-y: auto;
 }
 
@@ -50,9 +50,9 @@ body {
 }
 
 .nav-item {
-    display: flex; align-items: center; gap: 11px;
-    padding: 12px 15px; border-radius: 10px;
-    font-size: 15px; font-weight: 600; color: #111111;
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; border-radius: 10px;
+    font-size: 14px; font-weight: 600; color: #111111;
     text-decoration: none;
     border: 1.5px solid transparent;
     background: #FFFFFF;
@@ -93,10 +93,10 @@ body {
 .admin-type { font-size: 12px; color: #8B0000; font-weight: 600; }
 
 .btn-disconnect {
-    width: 100%; padding: 11px;
+    width: 100%; padding: 9px;
     border: 1.5px solid #8B0000; border-radius: 10px;
     background: none; color: #8B0000;
-    font-size: 14px; font-weight: 700; cursor: pointer;
+    font-size: 13px; font-weight: 700; cursor: pointer;
     display: flex; align-items: center; justify-content: center; gap: 8px;
     text-decoration: none; transition: all 0.15s ease;
     font-family: inherit;
@@ -107,12 +107,10 @@ body {
    CONTENU PRINCIPAL
    ══════════════════════════════════════ */
 .main-content {
-    margin-left: 270px;
+    margin-left: 250px;
     flex: 1;
-    min-width: 0;          /* ✔ Essentiel : permet à flex de ne pas déborder */
-    padding: 40px 48px;
+    padding: 32px 40px;
     min-height: 100vh;
-    overflow-x: hidden;    /* ✔ Garantit que rien ne dépasse en horizontal */
 }
 
 /* ── Bandeau "Admin connecté" en haut de page ── */
@@ -156,15 +154,15 @@ body {
 /* ── Header de page ── */
 .page-header { margin-bottom: 32px; }
 .page-header h1 {
-    font-size: 36px;
+    font-size: 28px;
     font-weight: 900;
     color: #111111;
-    letter-spacing: -1.2px;
+    letter-spacing: -1px;
 }
 .page-header p {
     color: #444444;
-    font-size: 16px;
-    margin-top: 8px;
+    font-size: 15px;
+    margin-top: 6px;
     font-weight: 500;
 }
 
@@ -196,20 +194,16 @@ body {
    ══════════════════════════════════════ */
 .stats {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: repeat(4, 1fr);
     gap: 22px;
     margin-bottom: 40px;
 }
 
 .stat-card {
-    background: #FFFFFF;
-    border: 2px solid #E5E7EB;
-    border-radius: 18px;
-    padding: 24px 26px;
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    background: #FFFFFF; border: 2px solid #E5E7EB;
+    border-radius: 14px; padding: 16px;
+    display: flex; flex-direction: column; gap: 8px;
+    transition: all 0.25s cubic-bezier(0.4,0,0.2,1);
 }
 .stat-card:hover {
     transform: translateY(-4px);
@@ -225,32 +219,14 @@ body {
 }
 
 /* TITRE EN HAUT EN GRAS */
-.stat-label {
-    font-size: 15px;
-    font-weight: 800;
-    color: #111111;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-    line-height: 1.3;
-    flex: 1;
-}
+.stat-label { font-size: 12px; font-weight: 800; color: #111111; text-transform: uppercase; letter-spacing: 0.5px; }
 
 .stat-icon {
-    width: 44px; height: 44px; border-radius: 12px;
+    width: 34px; height: 34px; border-radius: 10px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 20px;
-    border: 2px solid transparent;
-    flex-shrink: 0;
+    font-size: 16px; border: 2px solid transparent; flex-shrink: 0;
 }
-
-/* CHIFFRE EN BAS */
-.stat-number {
-    font-size: 56px;
-    font-weight: 900;
-    color: #111111;
-    line-height: 1;
-    letter-spacing: -2.5px;
-}
+.stat-number { font-size: 28px; font-weight: 800; color: #111111; line-height: 1; letter-spacing: -1px; }
 
 .ic-red  { background: #FEF2F2; border-color: #FCA5A5; color: #8B0000; }
 .ic-org  { background: #FFF7ED; border-color: #FED7AA; color: #EA580C; }
@@ -300,9 +276,7 @@ body {
 .table-wrapper {
     border: 2px solid #E5E7EB;
     border-radius: 14px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    -webkit-overflow-scrolling: touch;
+    overflow: hidden;
 }
 
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -593,7 +567,7 @@ table tbody tr:hover td { background: #FAFAFA; }
    ══════════════════════════════════════ */
 .stats-compact {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: repeat(4, 1fr);
     gap: 16px;
     margin-bottom: 28px;
 }

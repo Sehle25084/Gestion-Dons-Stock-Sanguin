@@ -1,191 +1,266 @@
 <?php
 session_start();
 require_once '../config/db.php';
+require_once '../config/helpers.php';
 
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'banque') {
     header("Location: ../index.php");
     exit;
 }
 
-$id_banque = $_SESSION['id'];
+// Compatibilité ancienne/nouvelle architecture
+$id_banque = $_SESSION['id_banque'] ?? $_SESSION['id'];
+
+// Vérifier les pochettes expirées en arrivant sur la page
+verifierPochettesExpirees($pdo, $id_banque);
+
 $page_active = 'stock';
-$erreur = $success = "";
+$success = $erreur = "";
 
+// ════════════════════════════════════════════════════════
+// AJOUTER / METTRE À JOUR du stock
+// ════════════════════════════════════════════════════════
 if (isset($_POST['ajouter'])) {
-    $id_groupe       = $_POST['id_groupe'];
-    $quantite        = (float)$_POST['quantite']; // Quantité en pochettes
+    $id_groupe       = (int)$_POST['id_groupe'];
+    $quantite        = (float)$_POST['quantite'];
     $date_expiration = $_POST['date_expiration'];
-    $date_maj        = date('Y-m-d');
+    $seuil           = (int)($_POST['seuil_alerte'] ?? 5);
 
-    $stmt = $pdo->prepare("SELECT * FROM stock WHERE id_banque = ? AND id_groupe = ?");
-    $stmt->execute([$id_banque, $id_groupe]);
-    $existe = $stmt->fetch();
-
-    if ($existe) {
-        $pdo->prepare("UPDATE stock SET quantite_disponible = ?, date_mise_a_jour = ?, date_expiration = ? WHERE id_banque = ? AND id_groupe = ?")->execute([$quantite, $date_maj, $date_expiration, $id_banque, $id_groupe]);
-        $success = "Stock mis à jour avec succès !";
+    if ($id_groupe <= 0) {
+        $erreur = "Veuillez choisir un groupe sanguin valide.";
+    } elseif ($quantite < 0) {
+        $erreur = "La quantité ne peut pas être négative.";
+    } elseif (empty($date_expiration) || strtotime($date_expiration) < strtotime(date('Y-m-d'))) {
+        $erreur = "La date d'expiration ne peut pas être dans le passé.";
     } else {
-        $pdo->prepare("INSERT INTO stock (id_banque, id_groupe, quantite_disponible, date_mise_a_jour, date_expiration) VALUES (?, ?, ?, ?, ?)")->execute([$id_banque, $id_groupe, $quantite, $date_maj, $date_expiration]);
-        $success = "Stock ajouté avec succès !";
+        // Vérifier que le groupe existe
+        $stmtChk = $pdo->prepare("SELECT id_groupe FROM groupe_sanguin WHERE id_groupe = ?");
+        $stmtChk->execute([$id_groupe]);
+        if (!$stmtChk->fetch()) {
+            $erreur = "Groupe sanguin invalide.";
+        } else {
+            $stmt = $pdo->prepare("SELECT * FROM stock WHERE id_banque = ? AND id_groupe = ?");
+            $stmt->execute([$id_banque, $id_groupe]);
+            $existe = $stmt->fetch();
+
+            if ($existe) {
+                $pdo->prepare("
+                    UPDATE stock 
+                    SET quantite_disponible = ?, seuil_alerte = ?, date_mise_a_jour = CURDATE(), date_expiration = ?
+                    WHERE id_banque = ? AND id_groupe = ?
+                ")->execute([$quantite, $seuil, $date_expiration, $id_banque, $id_groupe]);
+                $success = "Stock mis à jour avec succès !";
+            } else {
+                $pdo->prepare("
+                    INSERT INTO stock (id_banque, id_groupe, quantite_disponible, seuil_alerte, date_mise_a_jour, date_expiration)
+                    VALUES (?, ?, ?, ?, CURDATE(), ?)
+                ")->execute([$id_banque, $id_groupe, $quantite, $seuil, $date_expiration]);
+                $success = "Stock ajouté avec succès !";
+            }
+
+            enregistrerActivite($pdo, 'banque', $id_banque,
+                'Mise à jour stock — groupe #' . $id_groupe . ' : ' . $quantite . ' pochettes');
+        }
     }
 }
 
-if (isset($_GET['supprimer'])) {
-    $pdo->prepare("DELETE FROM stock WHERE id_stock = ? AND id_banque = ?")->execute([$_GET['supprimer'], $id_banque]);
-    $success = "Stock supprimé !";
-}
+// ════════════════════════════════════════════════════════
+// SUPPRESSION DIRECTE DÉSACTIVÉE
+// ════════════════════════════════════════════════════════
+// Raison : la banque ne peut PAS supprimer du stock arbitrairement.
+// Le stock évolue UNIQUEMENT via :
+//   - Acceptation de don     → augmentation
+//   - Acceptation demande SB → diminution FIFO
+//   - Expiration automatique → passage en déchets (table poches_dechets)
+// Si une pochette est défectueuse/contaminée, elle doit être tracée
+// dans `poches_dechets` avec une raison documentée, pas supprimée.
 
-$stmt = $pdo->prepare("SELECT s.*, g.libelle AS groupe FROM stock s JOIN groupe_sanguin g ON g.id_groupe = s.id_groupe WHERE s.id_banque = ? ORDER BY g.libelle");
+// ════════════════════════════════════════════════════════
+// CHARGEMENT du stock
+// ════════════════════════════════════════════════════════
+$stmt = $pdo->prepare("
+    SELECT s.*, g.libelle AS groupe 
+    FROM stock s 
+    JOIN groupe_sanguin g ON g.id_groupe = s.id_groupe 
+    WHERE s.id_banque = ? 
+    ORDER BY g.libelle
+");
 $stmt->execute([$id_banque]);
 $stocks = $stmt->fetchAll();
 
-$stmt = $pdo->prepare("SELECT SUM(quantite_disponible) FROM stock WHERE id_banque = ?");
-$stmt->execute([$id_banque]);
-$total = $stmt->fetchColumn() ?: 0;
-
 $groupes = $pdo->query("SELECT * FROM groupe_sanguin ORDER BY libelle")->fetchAll();
+
+// ════════════════════════════════════════════════════════
+// STATISTIQUES
+// ════════════════════════════════════════════════════════
+$total = 0;
+$nb_vide = $nb_faible = $nb_ok = $nb_expires = 0;
+
+foreach ($stocks as $s) {
+    $q = (int)$s['quantite_disponible'];
+    $seuil = (int)($s['seuil_alerte'] ?? 5);
+    $expire = strtotime($s['date_expiration']) < time();
+
+    $total += $q;
+    if ($q == 0) $nb_vide++;
+    elseif ($q <= $seuil) $nb_faible++;
+    else $nb_ok++;
+    if ($expire) $nb_expires++;
+}
+
+require_once '_style.php';
 ?>
 <!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stock | E-Sang Banque</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <?php include 'sidebar.php'; ?>
+    <title>Stock — <?php echo htmlspecialchars($_SESSION['nom_banque'] ?? 'Banque'); ?> | E-Sang</title>
     <style>
-        .stat-total {
-            background: linear-gradient(135deg, #8B0000, #6B0000);
-            border-radius: 20px; padding: 24px 28px;
-            margin-bottom: 32px;
-            display: flex; align-items: center; gap: 18px;
-            box-shadow: 0 8px 24px rgba(139,0,0,0.25);
-        }
-        .stat-total .icone { font-size: 40px; }
-        .stat-total .nombre { font-size: 40px; font-weight: 800; color: #fff; line-height: 1; }
-        .stat-total .label  { font-size: 14px; color: rgba(255,255,255,0.8); margin-top: 4px; }
+        <?php echo $shared_css; ?>
 
-        /* Bouton Ajouter en haut à droite avec écriture blanche */
-        .btn-open-modal {
-            background-color: #8B0000;
-            color: #ffffff;
-            padding: 10px 18px;
-            border-radius: 8px;
-            border: none;
-            font-family: 'Inter', sans-serif;
-            font-weight: 600;
-            font-size: 14px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            transition: background 0.2s;
-        }
-        .btn-open-modal:hover {
-            background-color: #6B0000;
-        }
+        /* Barres de niveau */
+        .niveau-bar  { width: 100%; height: 8px; background: #F3F4F6; border-radius: 99px; overflow: hidden; margin-top: 4px; }
+        .niveau-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
+        .fill-ok       { background: linear-gradient(90deg, #22C55E, #16A34A); }
+        .fill-faible   { background: linear-gradient(90deg, #F59E0B, #D97706); }
+        .fill-critique { background: linear-gradient(90deg, #EF4444, #DC2626); }
+        .fill-vide     { background: #6B0000; }
 
-        /* --- STYLES DE LA FENÊTRE MODALE (POPUP) --- */
-        .modal-overlay {
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            backdrop-filter: blur(4px);
-            display: flex; align-items: center; justify-content: center;
-            z-index: 9999;
-            opacity: 0; pointer-events: none;
-            transition: opacity 0.3s ease;
+        /* Tags d'état */
+        .etat-tag {
+            display:inline-flex; align-items:center; gap:5px;
+            font-weight:700; padding:4px 10px; border-radius:999px; font-size:11px;
         }
-        .modal-overlay.active {
-            opacity: 1; pointer-events: auto;
-        }
-        .modal-content {
-            background: #fff;
-            padding: 32px;
-            border-radius: 16px;
-            width: 100%; max-width: 450px;
-            box-shadow: 0 12px 40px rgba(0,0,0,0.15);
-            position: relative;
-            transform: translateY(-20px);
-            transition: transform 0.3s ease;
-        }
-        .modal-overlay.active .modal-content {
-            transform: translateY(0);
-        }
-        .modal-close {
-            position: absolute;
-            top: 20px; right: 20px;
-            font-size: 24px; color: #666;
-            cursor: pointer; border: none; background: none;
-        }
-        .modal-close:hover { color: #000; }
+        .etat-ok       { background:#D1FAE5; color:#065F46; }
+        .etat-faible   { background:#FEF3C7; color:#92400E; }
+        .etat-critique { background:#FEE2E2; color:#B91C1C; }
+        .etat-vide     { background:#6B0000; color:#FFFFFF; }
+        .etat-expire   { background:#7C2D12; color:#FFFFFF; }
     </style>
 </head>
 <body>
 
+<?php require_once 'sidebar.php'; ?>
+
 <div class="main-content">
 
-    <div class="page-header">
-        <h1>Gestion du stock</h1>
-        <p>Gérez le stock de sang de votre banque.</p>
-    </div>
-
-    <?php if ($erreur): ?><div class="alerte-erreur">⚠️ <?php echo htmlspecialchars($erreur); ?></div><?php endif; ?>
-    <?php if ($success): ?><div class="alerte-success">✅ <?php echo htmlspecialchars($success); ?></div><?php endif; ?>
-
-    <div class="stat-total">
-        <div class="icone">🩸</div>
-        <div>
-            <div class="nombre"><?php echo (int)$total; ?></div>
-            <div class="label">Pochettes disponibles en stock</div>
-        </div>
-    </div>
-
-    <div class="section">
-        <div class="section-header" style="display: flex; justify-content: space-between; align-items: center;">
-            <div style="display: flex; align-items: center; gap: 12px;">
-                <div class="section-title">Stock actuel</div>
-                <span class="cnt-badge"><?php echo count($stocks); ?> groupe(s)</span>
+    <!-- ══ TOP-BAR AGENT ══ -->
+    <div class="top-bar">
+        <div class="top-bar-user">
+            <div class="top-bar-avatar"><?php echo $agent_initials; ?></div>
+            <div class="top-bar-info">
+                <div class="top-bar-name">Bonjour, <?php echo $agent_display; ?></div>
+                <div class="top-bar-role">Agent — <?php echo htmlspecialchars($_SESSION['nom_banque'] ?? 'Banque de sang'); ?></div>
             </div>
-            <button class="btn-open-modal" onclick="toggleModal(true)">
-                <span style="font-size: 16px;">+</span> Ajouter du stock
-            </button>
         </div>
-        
+    </div>
+
+    <!-- ══ TITRE + BOUTON AJOUTER ══ -->
+    <div class="page-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+            <h1>Gestion du stock</h1>
+            <p>Inventaire et niveaux de réserve par groupe sanguin.</p>
+        </div>
+        <button class="btn-submit" onclick="ouvrirModalStock()" style="width:auto; margin-top:0; padding:11px 22px;">
+            + Ajouter du stock
+        </button>
+    </div>
+
+    <?php if ($success): ?><div class="alerte-success">✅ <?php echo htmlspecialchars($success); ?></div><?php endif; ?>
+    <?php if ($erreur):  ?><div class="alerte-erreur">⚠️ <?php echo htmlspecialchars($erreur);  ?></div><?php endif; ?>
+
+    <!-- ══ STATS COMPACTES ══ -->
+    <div class="stats-compact">
+        <div class="stat-mini">
+            <div class="stat-mini-icon ic-red">🩸</div>
+            <div class="stat-mini-content">
+                <div class="stat-mini-label">Total pochettes</div>
+                <div class="stat-mini-number"><?php echo $total; ?></div>
+            </div>
+        </div>
+        <div class="stat-mini">
+            <div class="stat-mini-icon ic-grn">🟢</div>
+            <div class="stat-mini-content">
+                <div class="stat-mini-label">Groupes OK</div>
+                <div class="stat-mini-number"><?php echo $nb_ok; ?></div>
+            </div>
+        </div>
+        <div class="stat-mini">
+            <div class="stat-mini-icon ic-org">🟡</div>
+            <div class="stat-mini-content">
+                <div class="stat-mini-label">Sous le seuil</div>
+                <div class="stat-mini-number <?php echo $nb_faible > 0 ? 'alert' : ''; ?>"><?php echo $nb_faible; ?></div>
+            </div>
+        </div>
+        <div class="stat-mini">
+            <div class="stat-mini-icon ic-red">🔴</div>
+            <div class="stat-mini-content">
+                <div class="stat-mini-label">En rupture</div>
+                <div class="stat-mini-number <?php echo $nb_vide > 0 ? 'alert' : ''; ?>"><?php echo $nb_vide; ?></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══ TABLEAU DU STOCK ══ -->
+    <div class="section">
+
+        <div class="section-header">
+            <div class="section-title">Inventaire par groupe sanguin</div>
+            <span class="cnt-badge"><?php echo count($stocks); ?> groupe(s) en stock</span>
+        </div>
+
         <div class="table-wrapper">
             <table>
                 <thead>
-                    <tr><th>Groupe</th><th>Quantité</th><th>Niveau</th><th>Mise à jour</th><th>Expiration</th></tr>
+                    <tr>
+                        <th>Groupe</th>
+                        <th>Quantité</th>
+                        <th>Niveau</th>
+                        <th>Seuil d'alerte</th>
+                        <th>Dernière MàJ</th>
+                        <th>Expiration</th>
+                        <th>État</th>
+                    </tr>
                 </thead>
                 <tbody>
                     <?php if ($stocks): ?>
-                        <?php foreach ($stocks as $s): ?>
-                        <?php
+                        <?php foreach ($stocks as $s):
+                            $q     = (int)$s['quantite_disponible'];
+                            $seuil = (int)($s['seuil_alerte'] ?? 5);
                             $expire = strtotime($s['date_expiration']) < time();
-                            $niveau = $s['quantite_disponible'];
-                            $pct = min(100, ($niveau / 20) * 100);
+                            $pct = $seuil > 0 ? min(100, round(($q / max($seuil * 2, 1)) * 100)) : ($q > 0 ? 100 : 0);
+
+                            if ($expire)                    { $etat_cls='etat-expire';    $etat_txt='⏰ Expiré';    $fill='fill-vide'; }
+                            elseif ($q === 0)               { $etat_cls='etat-vide';      $etat_txt='🔴 Rupture';   $fill='fill-vide'; }
+                            elseif ($q <= ceil($seuil / 2)) { $etat_cls='etat-critique';  $etat_txt='🟠 Critique';  $fill='fill-critique'; }
+                            elseif ($q <= $seuil)           { $etat_cls='etat-faible';    $etat_txt='🟡 Faible';    $fill='fill-faible'; }
+                            else                            { $etat_cls='etat-ok';        $etat_txt='🟢 OK';        $fill='fill-ok'; }
                         ?>
                         <tr>
                             <td><span class="badge badge-groupe"><?php echo htmlspecialchars($s['groupe']); ?></span></td>
-                            <td>
-                                <?php echo (int)$s['quantite_disponible']; ?> pochette(s)
-                                <div class="stock-bar"><div class="stock-bar-fill" style="width:<?php echo $pct; ?>%"></div></div>
+                            <td><strong style="font-size:17px;"><?php echo $q; ?></strong> pochette<?php echo $q > 1 ? 's' : ''; ?></td>
+                            <td style="min-width:130px;">
+                                <div class="niveau-bar">
+                                    <div class="niveau-fill <?php echo $fill; ?>" style="width:<?php echo $pct; ?>%"></div>
+                                </div>
+                                <div style="display:flex; justify-content:space-between; font-size:10px; color:#9CA3AF; margin-top:3px;">
+                                    <span>0</span><span><?php echo $seuil * 2; ?></span>
+                                </div>
                             </td>
-                            <td>
-                                <?php if ($niveau == 0): ?><span class="badge badge-vide">Vide</span>
-                                <?php elseif ($niveau <= ($s['seuil_alerte'] ?? 2)): ?><span class="badge badge-faible">Faible</span>
-                                <?php else: ?><span class="badge badge-ok">OK</span><?php endif; ?>
-                            </td>
+                            <td><strong><?php echo $seuil; ?></strong> poch.</td>
                             <td><?php echo date('d/m/Y', strtotime($s['date_mise_a_jour'])); ?></td>
-                            <td class="<?php echo $expire ? 'expire' : ''; ?>">
+                            <td>
                                 <?php echo date('d/m/Y', strtotime($s['date_expiration'])); ?>
-                                <?php if ($expire): ?> ⚠️<?php endif; ?>
+                                <?php if ($expire): ?>
+                                    <br><small style="color:#B91C1C; font-weight:700;">⚠️ Expiré</small>
+                                <?php endif; ?>
                             </td>
-                            
+                            <td><span class="etat-tag <?php echo $etat_cls; ?>"><?php echo $etat_txt; ?></span></td>
                         </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
-                        <tr><td colspan="6" class="vide">Aucun stock enregistré pour le moment.</td></tr>
+                        <tr><td colspan="7" class="vide">Aucun stock enregistré. Cliquez sur "Ajouter du stock" pour commencer.</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>
@@ -194,53 +269,71 @@ $groupes = $pdo->query("SELECT * FROM groupe_sanguin ORDER BY libelle")->fetchAl
 
 </div>
 
-<div class="modal-overlay" id="stockModal">
+<!-- ══ MODAL : Ajouter / Modifier le stock ══ -->
+<div class="modal" id="modalStock">
     <div class="modal-content">
-        <button class="modal-close" onclick="toggleModal(false)">&times;</button>
-        
-        <div class="section-header" style="margin-bottom: 20px;">
-            <div class="section-title">Ajouter / Modifier du stock</div>
+        <div class="modal-header">
+            <div class="modal-title">Ajouter / Modifier du stock</div>
+            <button class="modal-close" onclick="fermerModalStock()">×</button>
         </div>
-        
-        <form method="POST" action="">
+        <p style="color:#6B7280; font-size:13px; margin-bottom:20px;">
+            Si une ligne existe déjà pour ce groupe sanguin, elle sera mise à jour.
+            Sinon, une nouvelle entrée sera créée.
+        </p>
+
+        <form method="POST" action="stock.php">
             <div class="form-group">
-                <label>Groupe sanguin *</label>
-                <select name="id_groupe" required style="width:100%; padding:10px; border-radius:6px; border:1px solid #ccc; margin-top:5px;">
+                <label for="id_groupe">Groupe sanguin <span class="req">*</span></label>
+                <select name="id_groupe" id="id_groupe" required>
                     <option value="">— Choisir —</option>
                     <?php foreach ($groupes as $g): ?>
-                    <option value="<?php echo $g['id_groupe']; ?>"><?php echo htmlspecialchars($g['libelle']); ?></option>
+                        <option value="<?php echo $g['id_groupe']; ?>"><?php echo htmlspecialchars($g['libelle']); ?></option>
                     <?php endforeach; ?>
                 </select>
             </div>
-            <div class="form-group" style="margin-top: 15px;">
-                <label>Quantité (pochettes) *</label>
-                <input type="number" name="quantite" placeholder="Ex : 10" min="0" step="1" required style="width:100%; padding:10px; border-radius:6px; border:1px solid #ccc; margin-top:5px; box-sizing: border-box;"/>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="quantite">Quantité (pochettes) <span class="req">*</span></label>
+                    <input type="number" name="quantite" id="quantite" min="0" step="1" required placeholder="Ex : 10">
+                </div>
+
+                <div class="form-group">
+                    <label for="seuil_alerte">Seuil d'alerte</label>
+                    <input type="number" name="seuil_alerte" id="seuil_alerte" min="0" step="1" value="5">
+                    <small style="color:#9CA3AF; font-size:12px;">Alerte si stock ≤ seuil</small>
+                </div>
             </div>
-            <div class="form-group" style="margin-top: 15px; margin-bottom: 25px;">
-                <label>Date d'expiration *</label>
-                <input type="date" name="date_expiration" required style="width:100%; padding:10px; border-radius:6px; border:1px solid #ccc; margin-top:5px; box-sizing: border-box;"/>
+
+            <div class="form-group">
+                <label for="date_expiration">Date d'expiration <span class="req">*</span></label>
+                <input type="date" name="date_expiration" id="date_expiration" required
+                       min="<?php echo date('Y-m-d'); ?>"
+                       value="<?php echo date('Y-m-d', strtotime('+42 days')); ?>">
+                <small style="color:#9CA3AF; font-size:12px;">Par défaut : +42 jours (durée de conservation standard)</small>
             </div>
-            <button type="submit" name="ajouter" class="btn-submit" style="width: 100%;">Enregistrer le stock</button>
+
+            <div class="modal-actions">
+                <button type="button" class="btn-secondary" onclick="fermerModalStock()">Annuler</button>
+                <button type="submit" name="ajouter" class="btn-submit">Enregistrer</button>
+            </div>
         </form>
     </div>
 </div>
 
 <script>
-function toggleModal(show) {
-    const modal = document.getElementById('stockModal');
-    if (show) {
-        modal.classList.add('active');
-    } else {
-        modal.classList.remove('active');
-    }
+function ouvrirModalStock() {
+    document.getElementById('modalStock').classList.add('active');
 }
-
-window.onclick = function(event) {
-    const modal = document.getElementById('stockModal');
-    if (event.target == modal) {
-        modal.classList.remove('active');
-    }
+function fermerModalStock() {
+    document.getElementById('modalStock').classList.remove('active');
 }
+document.getElementById('modalStock').addEventListener('click', function(e) {
+    if (e.target === this) fermerModalStock();
+});
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') fermerModalStock();
+});
 </script>
 
 </body>

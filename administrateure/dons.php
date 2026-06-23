@@ -34,6 +34,20 @@ $stmt = $pdo->prepare("
 $stmt->execute($params);
 $dons = $stmt->fetchAll();
 
+// ✔ CORRECTION : N+1 query supprimée
+//   Avant : pour chaque don, une requête au registre national (1000 dons = 1000 requêtes)
+//   Maintenant : on récupère TOUS les noms en UNE seule requête `WHERE NNI IN (...)`
+$citoyens_par_nni = [];
+$nnis = array_filter(array_unique(array_column($dons, 'NNI')));
+if (!empty($nnis)) {
+    $placeholders = implode(',', array_fill(0, count($nnis), '?'));
+    $stmtCit = $pdo_registre->prepare("SELECT NNI, nom, prenom FROM citoyen WHERE NNI IN ($placeholders)");
+    $stmtCit->execute(array_values($nnis));
+    while ($row = $stmtCit->fetch()) {
+        $citoyens_par_nni[$row['NNI']] = $row;
+    }
+}
+
 // ════════════════════════════════════════════════════════
 // STATISTIQUES (toujours sur le total, pas sur le filtre)
 // ════════════════════════════════════════════════════════
@@ -198,13 +212,8 @@ require_once '_style.php';
                     <?php if ($dons): ?>
                         <?php foreach ($dons as $d): ?>
                         <?php
-                        // Récupération nom donneur depuis registre national
-                        $citoyen = null;
-                        if (!empty($d['NNI'])) {
-                            $stmt = $pdo_registre->prepare("SELECT nom, prenom FROM citoyen WHERE NNI = ?");
-                            $stmt->execute([$d['NNI']]);
-                            $citoyen = $stmt->fetch();
-                        }
+                        // ✔ CORRECTION : on lit depuis le tableau pré-chargé (plus de requête dans la boucle)
+                        $citoyen = !empty($d['NNI']) ? ($citoyens_par_nni[$d['NNI']] ?? null) : null;
                         ?>
                         <tr>
                             <td>

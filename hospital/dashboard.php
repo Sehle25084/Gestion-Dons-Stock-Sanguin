@@ -9,7 +9,6 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'hopital') {
 
 // Vérifier que la session utilise le nouveau format (responsable_hopital)
 if (!isset($_SESSION['id_hopital']) || !isset($_SESSION['id_responsable'])) {
-    // Ancienne session détectée — forcer la reconnexion
     session_destroy();
     header('Location: ../index.php');
     exit;
@@ -18,30 +17,31 @@ if (!isset($_SESSION['id_hopital']) || !isset($_SESSION['id_responsable'])) {
 $id_hopital = $_SESSION['id_hopital'];
 $id_banque = $_SESSION['id_banque'];
 $id_responsable = $_SESSION['id_responsable'];
-$page_active = 'dashboard';
 
 // ── Statistiques des demandes ──
-$stmt = $pdo->prepare("SELECT COUNT(*) FROM demande WHERE id_hopital = ?");
-$stmt->execute([$id_hopital]);
-$nb_demandes = $stmt->fetchColumn();
+$nb_demandes = $pdo->prepare("SELECT COUNT(*) FROM demande WHERE id_hopital = ?");
+$nb_demandes->execute([$id_hopital]);
+$nb_demandes = $nb_demandes->fetchColumn();
 
-$stmt = $pdo->prepare("SELECT COUNT(*) FROM demande WHERE id_hopital = ? AND statut = 'en_attente'");
-$stmt->execute([$id_hopital]);
-$nb_attente = $stmt->fetchColumn();
+$nb_attente = $pdo->prepare("SELECT COUNT(*) FROM demande WHERE id_hopital = ? AND statut = 'en_attente'");
+$nb_attente->execute([$id_hopital]);
+$nb_attente = $nb_attente->fetchColumn();
 
-$stmt = $pdo->prepare("SELECT COUNT(*) FROM demande WHERE id_hopital = ? AND statut = 'acceptée'");
-$stmt->execute([$id_hopital]);
-$nb_acceptees = $stmt->fetchColumn();
+$nb_acceptees = $pdo->prepare("SELECT COUNT(*) FROM demande WHERE id_hopital = ? AND statut = 'acceptée'");
+$nb_acceptees->execute([$id_hopital]);
+$nb_acceptees = $nb_acceptees->fetchColumn();
 
-$stmt = $pdo->prepare("SELECT COUNT(*) FROM demande WHERE id_hopital = ? AND statut = 'refusée'");
-$stmt->execute([$id_hopital]);
-$nb_refusees = $stmt->fetchColumn();
+$nb_refusees = $pdo->prepare("SELECT COUNT(*) FROM demande WHERE id_hopital = ? AND statut = 'refusée'");
+$nb_refusees->execute([$id_hopital]);
+$nb_refusees = $nb_refusees->fetchColumn();
 
-// ── Dernières 5 demandes ──
+// ── Dernières 5 demandes (Jointure avec SOUS-BANQUE) ──
+// ✔ CORRECTION : alias renommé en `nom_sous_banque` pour refléter la réalité
+//   (avant : alias trompeur `nom_banque` qui faisait croire à une banque principale)
 $stmt = $pdo->prepare("
-    SELECT d.*, b.nom AS nom_banque, g.libelle AS groupe
+    SELECT d.*, s.nom AS nom_sous_banque, g.libelle AS groupe
     FROM demande d
-    JOIN banque_de_sang b ON b.id_banque = d.id_banque
+    LEFT JOIN sous_banque s ON s.id_sous_banque = d.id_sous_banque
     JOIN groupe_sanguin g ON g.id_groupe = d.id_groupe
     WHERE d.id_hopital = ?
     ORDER BY d.date_demande DESC
@@ -56,10 +56,12 @@ $nom = htmlspecialchars($_SESSION['nom_responsable'] ?? '');
 $poste = htmlspecialchars($_SESSION['poste_responsable'] ?? '');
 $nom_hopital = htmlspecialchars($_SESSION['nom_hopital'] ?? '');
 
-setlocale(LC_TIME, 'fr_FR.UTF-8', 'fr_FR', 'fra');
-$jours = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
-$mois = ['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
-$date_affichee = $jours[date('w')] . ' ' . date('d') . ' ' . $mois[date('n')] . ' ' . date('Y');
+$jours_fr  = ['Sunday'=>'dimanche', 'Monday'=>'lundi', 'Tuesday'=>'mardi', 'Wednesday'=>'mercredi', 'Thursday'=>'jeudi', 'Friday'=>'vendredi', 'Saturday'=>'samedi'];
+$mois_fr   = ['January'=>'janvier', 'February'=>'février', 'March'=>'mars', 'April'=>'avril', 'May'=>'mai', 'June'=>'juin', 'July'=>'juillet', 'August'=>'août', 'September'=>'septembre', 'October'=>'octobre', 'November'=>'novembre', 'December'=>'décembre'];
+$date_fr   = $jours_fr[date('l')] . ' ' . date('j') . ' ' . $mois_fr[date('F')] . ' ' . date('Y');
+
+$page_active = 'dashboard';
+require_once '_style.php';
 ?>
 <!DOCTYPE html>
 <html lang="fr">
@@ -67,54 +69,66 @@ $date_affichee = $jours[date('w')] . ' ' . date('d') . ' ' . $mois[date('n')] . 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tableau de bord — <?php echo $nom_hopital; ?> | E-Sang</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        <?php echo $shared_css; ?>
+    </style>
 </head>
 <body>
 
-<?php include 'sidebar.php'; ?>
+<?php require_once 'sidebar.php'; ?>
 
 <main class="main-content">
 
-    <!-- ══ BANNIÈRE DE BIENVENUE ══ -->
-    <div style="background: #FFFFFF; border: 2px solid #E5E7EB; border-radius: 20px; padding: 32px 36px; margin-bottom: 36px; display: flex; align-items: center; justify-content: space-between;">
-        <div>
-            <h1 style="font-size: 28px; font-weight: 800; margin-bottom: 6px; letter-spacing: -0.5px; color: #111111;">Bonjour, <?php echo $prenom . ' ' . $nom; ?></h1>
-            <p style="font-size: 15px; color: #6B7280; font-weight: 500;"><?php echo $poste; ?> — <?php echo $nom_hopital; ?></p>
+    <!-- ── Bandeau "Responsable" en haut de page ── -->
+    <div class="top-bar">
+        <div class="top-bar-user">
+            <div class="top-bar-avatar">
+                <?php echo strtoupper(substr($prenom, 0, 1) . substr($nom, 0, 1)); ?>
+            </div>
+            <div class="top-bar-info">
+                <div class="top-bar-name">Bonjour, <?php echo $prenom . ' ' . $nom; ?></div>
+                <div class="top-bar-role"><?php echo $poste; ?> — <?php echo $nom_hopital; ?></div>
+            </div>
         </div>
-        <div style="text-align: right;">
-            <div style="font-size: 14px; font-weight: 600; color: #6B7280;">📅 <?php echo $date_affichee; ?></div>
+        <div class="top-bar-date">
+            📅 <?php echo $date_fr; ?>
         </div>
     </div>
 
+    <div class="page-header">
+        <h1>Tableau de bord</h1>
+        <p>Aperçu de vos demandes de sang</p>
+    </div>
+
     <!-- ══ CARTES STATISTIQUES ══ -->
-    <div class="stats" style="grid-template-columns: repeat(2, 1fr);">
-        <div class="stat-card c1">
+    <div class="stats" style="grid-template-columns: repeat(4, 1fr);">
+        <div class="stat-card">
             <div class="stat-card-header">
-                <span class="stat-label">Demandes envoyées</span>
+                <span class="stat-label">Total Demandes</span>
                 <span class="stat-icon ic-red">📋</span>
             </div>
             <span class="stat-number"><?php echo $nb_demandes; ?></span>
         </div>
 
-        <div class="stat-card c2">
+        <div class="stat-card">
             <div class="stat-card-header">
-                <span class="stat-label">Demandes en attente</span>
+                <span class="stat-label">En attente</span>
                 <span class="stat-icon ic-org">⏳</span>
             </div>
             <span class="stat-number"><?php echo $nb_attente; ?></span>
         </div>
 
-        <div class="stat-card c3">
+        <div class="stat-card">
             <div class="stat-card-header">
-                <span class="stat-label">Demandes approuvées</span>
+                <span class="stat-label">Approuvées</span>
                 <span class="stat-icon ic-grn">✅</span>
             </div>
             <span class="stat-number"><?php echo $nb_acceptees; ?></span>
         </div>
 
-        <div class="stat-card c4">
+        <div class="stat-card">
             <div class="stat-card-header">
-                <span class="stat-label">Demandes refusées</span>
+                <span class="stat-label">Refusées</span>
                 <span class="stat-icon ic-blu">❌</span>
             </div>
             <span class="stat-number"><?php echo $nb_refusees; ?></span>
@@ -134,7 +148,7 @@ $date_affichee = $jours[date('w')] . ' ' . date('d') . ' ' . $mois[date('n')] . 
                     <tr>
                         <th>Groupe</th>
                         <th>Quantité</th>
-                        <th>Banque</th>
+                        <th>Sous-banque</th>
                         <th>Date</th>
                         <th>Statut</th>
                         <th>Actions</th>
@@ -158,15 +172,17 @@ $date_affichee = $jours[date('w')] . ' ' . date('d') . ' ' . $mois[date('n')] . 
                             <tr>
                                 <td><span class="badge badge-groupe"><?php echo htmlspecialchars($d['groupe']); ?></span></td>
                                 <td style="font-weight: 800;"><?php echo $d['quantite_demandee']; ?> poches</td>
-                                <td><?php echo htmlspecialchars($d['nom_banque']); ?></td>
+                                <td><?php echo htmlspecialchars($d['nom_sous_banque'] ?? 'Non assignée'); ?></td>
                                 <td><?php echo date('d/m/Y', strtotime($d['date_demande'])); ?></td>
                                 <td><span class="badge <?php echo $badge_s; ?>"><?php echo $label_s; ?></span></td>
                                 <td>
-                                    <?php if ($statut === 'en_attente'): ?>
-                                        <a href="demandes.php?annuler=<?php echo $d['id_demande']; ?>" class="btn-del" onclick="return confirm('Êtes-vous sûr de vouloir annuler cette demande ?');">Annuler la demande</a>
-                                    <?php else: ?>
-                                        <span style="color: #9CA3AF; font-size: 12px;">—</span>
-                                    <?php endif; ?>
+                                    <div class="actions-cell">
+                                        <?php if ($statut === 'en_attente'): ?>
+                                            <a href="demandes.php?annuler=<?php echo $d['id_demande']; ?>" class="btn-del" onclick="return confirm('Êtes-vous sûr de vouloir annuler cette demande ?');">Annuler</a>
+                                        <?php else: ?>
+                                            <span style="color: #9CA3AF; font-size: 12px;">—</span>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

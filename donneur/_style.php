@@ -1,7 +1,7 @@
 <?php
 // ════════════════════════════════════════════════════
-// E-SANG — Styles partagés ADMIN
-// Inclure AVANT sidebar.php dans chaque page admin
+// E-SANG — Styles partagés DONNEUR
+// Inclure AVANT sidebar.php dans chaque page donneur
 // Usage : require_once '_style.php'; puis utiliser $shared_css
 // ════════════════════════════════════════════════════
 $shared_css = <<<'CSS'

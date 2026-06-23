@@ -34,10 +34,9 @@ $nb_demandes_attente = $pdo->query("SELECT COUNT(*) FROM demande WHERE statut = 
 // Stocks critiques (sous le seuil d'alerte)
 $nb_stocks_critiques = 0;
 try {
-    $nb_stocks_critiques = $pdo->query("
-        SELECT COUNT(*) FROM stock
-        WHERE quantite_disponible <= seuil_alerte
-    ")->fetchColumn();
+    $critiques_banque = $pdo->query("SELECT COUNT(*) FROM stock WHERE quantite_disponible <= seuil_alerte")->fetchColumn();
+    $critiques_sous_banque = $pdo->query("SELECT COUNT(*) FROM stock_sous_banque WHERE quantite_disponible <= seuil_alerte")->fetchColumn();
+    $nb_stocks_critiques = $critiques_banque + $critiques_sous_banque;
 } catch (Exception $e) {
     $nb_stocks_critiques = $pdo->query("SELECT COUNT(*) FROM stock WHERE quantite_disponible < 5")->fetchColumn();
 }
@@ -45,12 +44,20 @@ try {
 // ════════════════════════════════════════════════════════
 // DONNÉES POUR LES ONGLETS
 // ════════════════════════════════════════════════════════
+// ✔ CORRECTION : LEFT JOIN au lieu de INNER JOIN pour ne pas exclure les demandes
+//   internes (hôpital → sous-banque, où id_banque = NULL).
+//   On joint aussi `hopital` pour afficher correctement le demandeur dans chaque cas.
 $demandes = $pdo->query("
-    SELECT d.*, h.nom AS nom_hopital, b.nom AS nom_banque, g.libelle AS groupe
+    SELECT d.*,
+           h.nom  AS nom_hopital,
+           s.nom  AS nom_sous_banque,
+           b.nom  AS nom_banque,
+           g.libelle AS groupe
     FROM demande d
-    JOIN hopital h         ON h.id_hopital = d.id_hopital
-    JOIN banque_de_sang b  ON b.id_banque  = d.id_banque
-    JOIN groupe_sanguin g  ON g.id_groupe  = d.id_groupe
+    LEFT JOIN hopital h         ON h.id_hopital      = d.id_hopital
+    LEFT JOIN sous_banque s     ON s.id_sous_banque  = d.id_sous_banque
+    LEFT JOIN banque_de_sang b  ON b.id_banque       = d.id_banque
+    JOIN groupe_sanguin g       ON g.id_groupe       = d.id_groupe
     ORDER BY d.date_demande DESC
     LIMIT 5
 ")->fetchAll();
@@ -189,7 +196,7 @@ require_once '_style.php';
         <div class="stat-mini">
             <div class="stat-mini-icon ic-red">💉</div>
             <div class="stat-mini-content">
-                <div class="stat-mini-label">Dons effectués</div>
+                <div class="stat-mini-label">Historique dons</div>
                 <div class="stat-mini-number"><?php echo $nb_dons; ?></div>
             </div>
         </div>
@@ -197,7 +204,7 @@ require_once '_style.php';
         <div class="stat-mini">
             <div class="stat-mini-icon ic-org">📋</div>
             <div class="stat-mini-content">
-                <div class="stat-mini-label">Demandes totales</div>
+                <div class="stat-mini-label">Historique demandes</div>
                 <div class="stat-mini-number"><?php echo $nb_demandes; ?></div>
             </div>
         </div>
@@ -268,8 +275,9 @@ require_once '_style.php';
                 <table>
                     <thead>
                         <tr>
-                            <th>Hôpital</th>
-                            <th>Banque</th>
+                            <th>Type</th>
+                            <th>Demandeur</th>
+                            <th>Récepteur</th>
                             <th>Groupe</th>
                             <th>Quantité</th>
                             <th>Date</th>
@@ -279,9 +287,28 @@ require_once '_style.php';
                     <tbody>
                         <?php if ($demandes): ?>
                             <?php foreach ($demandes as $d): ?>
+                            <?php
+                                // ✔ CORRECTION : affichage adapté selon le type de demande
+                                //   - interne : hôpital → sous-banque
+                                //   - externe : sous-banque → banque principale
+                                if ($d['type_demande'] === 'interne') {
+                                    $type_label    = '🏥 Interne';
+                                    $type_style    = 'background:#EEF2FF; color:#4338CA; border:1.5px solid #C7D2FE;';
+                                    $demandeur     = $d['nom_hopital']     ?? '—';
+                                    $recepteur     = $d['nom_sous_banque'] ?? '—';
+                                    $recepteur_ico = '🏪';
+                                } else {
+                                    $type_label    = '🏦 Externe';
+                                    $type_style    = 'background:#FDF4FF; color:#86198F; border:1.5px solid #F5D0FE;';
+                                    $demandeur     = $d['nom_sous_banque'] ?? '—';
+                                    $recepteur     = $d['nom_banque']      ?? '—';
+                                    $recepteur_ico = '🏦';
+                                }
+                            ?>
                             <tr>
-                                <td><strong><?php echo htmlspecialchars($d['nom_hopital']); ?></strong></td>
-                                <td><?php echo htmlspecialchars($d['nom_banque']); ?></td>
+                                <td><span class="badge" style="<?php echo $type_style; ?>"><?php echo $type_label; ?></span></td>
+                                <td><strong><?php echo htmlspecialchars($demandeur); ?></strong></td>
+                                <td><?php echo $recepteur_ico . ' ' . htmlspecialchars($recepteur); ?></td>
                                 <td><span class="badge badge-groupe"><?php echo htmlspecialchars($d['groupe']); ?></span></td>
                                 <td><strong><?php echo (int)$d['quantite_demandee']; ?></strong> pochette(s)</td>
                                 <td><?php echo date('d/m/Y', strtotime($d['date_demande'])); ?></td>
@@ -290,6 +317,8 @@ require_once '_style.php';
                                         <span class="badge badge-attente">En attente</span>
                                     <?php elseif ($d['statut'] === 'acceptée'): ?>
                                         <span class="badge badge-acceptee">Acceptée</span>
+                                    <?php elseif ($d['statut'] === 'annulée'): ?>
+                                        <span class="badge badge-annulee">Annulée</span>
                                     <?php else: ?>
                                         <span class="badge badge-refusee">Refusée</span>
                                     <?php endif; ?>
@@ -297,14 +326,12 @@ require_once '_style.php';
                             </tr>
                             <?php endforeach; ?>
                         <?php else: ?>
-                            <tr><td colspan="6" class="vide">Aucune demande enregistrée pour le moment.</td></tr>
+                            <tr><td colspan="7" class="vide">Aucune demande enregistrée pour le moment.</td></tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
             </div>
-            <div style="text-align: right; margin-top: 16px;">
-                <a href="demandes.php" class="section-link">Voir toutes les demandes →</a>
-            </div>
+
         </div>
 
         <!-- ── Onglet Dons ── -->

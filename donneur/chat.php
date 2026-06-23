@@ -9,12 +9,17 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'donneur') {
 
 $id_donneur = $_SESSION['id'];
 
-// Donneur courant
+// ── Donneur courant ──
 $stmt = $pdo->prepare("SELECT * FROM donneur WHERE id_donneur = ?");
 $stmt->execute([$id_donneur]);
 $donneur = $stmt->fetch();
 
-// Libellé du groupe sanguin
+// ── Citoyen courant ──
+$stmt = $pdo_registre->prepare("SELECT prenom, nom FROM citoyen WHERE NNI = ?");
+$stmt->execute([$donneur['NNI']]);
+$citoyen = $stmt->fetch();
+
+// ── Libellé du groupe sanguin ──
 $groupe_libelle = null;
 if ($donneur['id_groupe']) {
     $stmt = $pdo->prepare("SELECT libelle FROM groupe_sanguin WHERE id_groupe = ?");
@@ -23,12 +28,7 @@ if ($donneur['id_groupe']) {
     if ($g) $groupe_libelle = $g['libelle'];
 }
 
-// Citoyen courant (pour les initiales)
-$stmt = $pdo_registre->prepare("SELECT prenom, nom FROM citoyen WHERE NNI = ?");
-$stmt->execute([$donneur['NNI']]);
-$me = $stmt->fetch();
-
-// ===== Envoi d'un message =====
+// ── Envoi d'un message ──
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $donneur['id_groupe']) {
     $contenu = trim($_POST['contenu'] ?? '');
     if ($contenu !== '' && mb_strlen($contenu) <= 1000) {
@@ -42,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $donneur['id_groupe']) {
     exit;
 }
 
-// ===== Récupération des messages du groupe =====
+// ── Récupération des messages ──
 $messages = [];
 $citoyens_by_nni = [];
 $nb_membres = 0;
@@ -59,7 +59,7 @@ if ($donneur['id_groupe']) {
     $stmt->execute([$donneur['id_groupe']]);
     $messages = $stmt->fetchAll();
 
-    // Récupération des noms (un seul appel au registre national)
+    // N+1 query résolu : un seul appel au registre national
     $nnis = array_unique(array_column($messages, 'NNI'));
     if ($nnis) {
         $placeholders = implode(',', array_fill(0, count($nnis), '?'));
@@ -70,13 +70,13 @@ if ($donneur['id_groupe']) {
         }
     }
 
-    // Nombre de membres du groupe (donneurs ayant le même groupe confirmé)
+    // Nombre de membres du groupe
     $stmt = $pdo->prepare("SELECT COUNT(*) FROM donneur WHERE id_groupe = ?");
     $stmt->execute([$donneur['id_groupe']]);
     $nb_membres = (int)$stmt->fetchColumn();
 }
 
-// ===== Helpers =====
+// ── Helpers ──
 function initiales($prenom, $nom) {
     if ($prenom && $nom) {
         return mb_strtoupper(mb_substr($prenom, 0, 1) . mb_substr($nom, 0, 1));
@@ -85,7 +85,7 @@ function initiales($prenom, $nom) {
 }
 
 function couleur_avatar($nni) {
-    $colors = ['#8b1717', '#1e3a8a', '#166534', '#92400e', '#581c87', '#0e7490', '#9f1239', '#3730a3'];
+    $colors = ['#8B0000', '#1E3A8A', '#166534', '#92400E', '#581C87', '#0E7490', '#9F1239', '#3730A3'];
     return $colors[abs(crc32((string)$nni)) % count($colors)];
 }
 
@@ -99,6 +99,7 @@ function format_date_chat($datetime) {
 }
 
 $page_active = 'chat';
+require_once '_style.php';
 ?>
 <!DOCTYPE html>
 <html lang="fr">
@@ -106,67 +107,57 @@ $page_active = 'chat';
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chat groupe — E-Sang Donneur</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <?php include 'sidebar.php'; ?>
-
-    <!-- ====== Styles spécifiques chat ====== -->
     <style>
+        <?php echo $shared_css; ?>
+
+        /* ── En-tête chat ── */
         .chat-header {
-            background: #ffffff;
-            border: 1px solid #e5e7eb;
-            border-left: 4px solid #8b1717;
-            border-radius: 12px;
-            padding: 18px 24px;
-            margin: 20px 0 20px;
+            background: #FFFFFF;
+            border: 1.5px solid #E5E7EB;
+            border-left: 4px solid #8B0000;
+            border-radius: 14px;
+            padding: 18px 22px;
+            margin-bottom: 20px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: 16px;
             flex-wrap: wrap;
         }
-        .chat-header-left {
-            display: flex; align-items: center; gap: 14px;
-        }
-        .chat-icon {
+        .chat-header-left { display: flex; align-items: center; gap: 14px; }
+        .chat-icon-wrap {
             width: 48px; height: 48px;
-            border-radius: 50%;
-            background: #fcebeb;
-            color: #8b1717;
+            border-radius: 12px;
+            background: #FEF2F2;
+            color: #8B0000;
             display: flex; align-items: center; justify-content: center;
             font-size: 22px;
+            border: 1.5px solid #FCA5A5;
         }
         .chat-header h2 {
-            margin: 0;
-            font-size: 19px;
-            font-weight: 700;
-            color: #1a1a1a;
+            margin: 0; font-size: 17px; font-weight: 800; color: #111111;
         }
         .chat-header p {
-            margin: 2px 0 0;
-            font-size: 13px;
-            color: #6b6b6b;
+            margin: 2px 0 0; font-size: 12px; color: #6B7280;
         }
         .chat-badge-groupe {
-            background: #8b1717;
-            color: #ffffff;
-            font-weight: 700;
-            font-size: 14px;
-            padding: 8px 14px;
-            border-radius: 8px;
+            background: #8B0000; color: #FFFFFF;
+            font-weight: 800; font-size: 14px;
+            padding: 8px 14px; border-radius: 10px;
             letter-spacing: 0.5px;
         }
 
+        /* ── Fenêtre de chat ── */
         .chat-window {
-            background: #ffffff;
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
+            background: #FFFFFF;
+            border: 1.5px solid #E5E7EB;
+            border-radius: 14px;
             display: flex;
             flex-direction: column;
-            height: 65vh;
-            min-height: 460px;
+            height: 60vh;
+            min-height: 420px;
             overflow: hidden;
         }
-
         .chat-messages {
             flex: 1;
             overflow-y: auto;
@@ -174,165 +165,153 @@ $page_active = 'chat';
             display: flex;
             flex-direction: column;
             gap: 14px;
-            background: #fafafa;
+            background: #FAFAFA;
         }
         .chat-messages::-webkit-scrollbar { width: 8px; }
-        .chat-messages::-webkit-scrollbar-thumb {
-            background: #d4d4d4; border-radius: 4px;
-        }
+        .chat-messages::-webkit-scrollbar-thumb { background: #D4D4D4; border-radius: 4px; }
 
         .chat-msg {
-            display: flex;
-            gap: 10px;
-            max-width: 78%;
+            display: flex; gap: 10px; max-width: 78%;
         }
         .chat-msg.mine {
             align-self: flex-end;
             flex-direction: row-reverse;
         }
-
         .chat-avatar {
-            width: 38px; height: 38px;
+            width: 36px; height: 36px;
             border-radius: 50%;
-            color: #ffffff;
+            color: #FFFFFF;
             display: flex; align-items: center; justify-content: center;
-            font-size: 13px;
-            font-weight: 700;
+            font-size: 12px; font-weight: 700;
             flex-shrink: 0;
         }
-
         .chat-msg-body {
-            display: flex;
-            flex-direction: column;
-            min-width: 0;
+            display: flex; flex-direction: column; min-width: 0;
         }
-        .chat-msg.mine .chat-msg-body {
-            align-items: flex-end;
-        }
-
+        .chat-msg.mine .chat-msg-body { align-items: flex-end; }
         .chat-msg-author {
-            font-size: 12px;
-            font-weight: 600;
-            color: #6b6b6b;
-            margin-bottom: 4px;
-            padding: 0 4px;
+            font-size: 11px; font-weight: 700; color: #6B7280;
+            margin-bottom: 4px; padding: 0 4px;
         }
-
         .chat-bubble {
-            background: #ffffff;
-            border: 1px solid #e5e7eb;
-            color: #1a1a1a;
+            background: #FFFFFF;
+            border: 1.5px solid #E5E7EB;
+            color: #111111;
             padding: 10px 14px;
             border-radius: 14px;
             border-top-left-radius: 4px;
-            font-size: 15px;
+            font-size: 14px;
             line-height: 1.5;
             word-wrap: break-word;
-            overflow-wrap: break-word;
             white-space: pre-wrap;
         }
         .chat-msg.mine .chat-bubble {
-            background: #8b1717;
-            border-color: #8b1717;
-            color: #ffffff;
+            background: #8B0000;
+            border-color: #8B0000;
+            color: #FFFFFF;
             border-top-left-radius: 14px;
             border-top-right-radius: 4px;
         }
-
         .chat-time {
-            font-size: 11px;
-            color: #9ca3af;
-            margin-top: 4px;
-            padding: 0 4px;
+            font-size: 10px; color: #9CA3AF;
+            margin-top: 4px; padding: 0 4px;
         }
 
         .chat-empty {
             margin: auto;
             text-align: center;
-            color: #9ca3af;
+            color: #9CA3AF;
             font-size: 14px;
             padding: 40px 20px;
         }
-        .chat-empty-icon {
-            font-size: 42px;
-            margin-bottom: 12px;
-        }
+        .chat-empty-icon { font-size: 42px; margin-bottom: 12px; }
 
+        /* ── Formulaire ── */
         .chat-form {
-            border-top: 1px solid #e5e7eb;
-            background: #ffffff;
+            border-top: 1.5px solid #E5E7EB;
+            background: #FFFFFF;
             padding: 14px 16px;
-            display: flex;
-            gap: 10px;
-            align-items: flex-end;
+            display: flex; gap: 10px; align-items: flex-end;
         }
         .chat-form textarea {
             flex: 1;
             resize: none;
             font-family: 'Inter', sans-serif;
-            font-size: 15px;
+            font-size: 14px;
             line-height: 1.5;
             padding: 10px 14px;
-            border: 1px solid #d4d4d4;
+            border: 1.5px solid #E5E7EB;
             border-radius: 10px;
             outline: none;
             min-height: 44px;
             max-height: 140px;
-            color: #1a1a1a;
+            color: #111111;
             transition: border-color 0.15s;
         }
         .chat-form textarea:focus {
-            border-color: #8b1717;
-            box-shadow: 0 0 0 3px rgba(139, 23, 23, 0.1);
+            border-color: #8B0000;
+            box-shadow: 0 0 0 3px rgba(139, 0, 0, 0.08);
         }
         .chat-form button {
-            background: #8b1717;
-            color: #ffffff;
+            background: #8B0000;
+            color: #FFFFFF;
             border: none;
             padding: 0 22px;
             height: 44px;
             border-radius: 10px;
-            font-size: 15px;
-            font-weight: 600;
+            font-size: 14px; font-weight: 700;
             cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
+            display: inline-flex; align-items: center; gap: 8px;
             transition: background 0.15s;
+            font-family: inherit;
         }
-        .chat-form button:hover  { background: #6b1010; }
-        .chat-form button:active { background: #501313; }
-        .chat-form button svg    { width: 16px; height: 16px; }
+        .chat-form button:hover { background: #6B0000; }
+        .chat-form button svg   { width: 16px; height: 16px; }
 
+        /* ── Chat verrouillé ── */
         .chat-locked {
-            background: #fef3c7;
-            border: 1px solid #fde68a;
-            border-radius: 12px;
-            padding: 26px 24px;
+            background: #FEF3C7;
+            border: 1.5px solid #FCD34D;
+            border-radius: 14px;
+            padding: 30px 24px;
             text-align: center;
-            color: #78350f;
+            color: #78350F;
         }
-        .chat-locked-icon { font-size: 40px; margin-bottom: 10px; }
-        .chat-locked h3 { margin: 0 0 6px; font-size: 17px; color: #92400e; }
-        .chat-locked p  { margin: 0; font-size: 14px; line-height: 1.5; }
+        .chat-locked-icon { font-size: 42px; margin-bottom: 12px; }
+        .chat-locked h3 { margin: 0 0 6px; font-size: 18px; color: #92400E; font-weight: 800; }
+        .chat-locked p  { margin: 0; font-size: 14px; line-height: 1.6; }
 
         @media (max-width: 640px) {
             .chat-msg { max-width: 90%; }
-            .chat-window { height: 70vh; }
+            .chat-window { height: 65vh; }
         }
     </style>
 </head>
 <body>
 
+<?php require_once 'sidebar.php'; ?>
+
 <div class="main-content">
 
+    <!-- ══ TOP-BAR ══ -->
+    <div class="top-bar">
+        <div class="top-bar-user">
+            <div class="top-bar-avatar"><?php echo $donneur_initials; ?></div>
+            <div class="top-bar-info">
+                <div class="top-bar-name">Bonjour, <?php echo $donneur_display; ?></div>
+                <div class="top-bar-role">Espace donneur</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══ TITRE ══ -->
     <div class="page-header">
         <h1>Chat groupe</h1>
         <p>Échangez avec les donneurs de votre groupe sanguin.</p>
     </div>
 
     <?php if (!$donneur['id_groupe']): ?>
-        <!-- Groupe pas encore confirmé -->
+        <!-- ══ Chat verrouillé ══ -->
         <div class="chat-locked">
             <div class="chat-locked-icon">🔒</div>
             <h3>Chat verrouillé</h3>
@@ -341,10 +320,10 @@ $page_active = 'chat';
         </div>
 
     <?php else: ?>
-        <!-- En-tête du chat -->
+        <!-- ══ En-tête du chat ══ -->
         <div class="chat-header">
             <div class="chat-header-left">
-                <div class="chat-icon">💬</div>
+                <div class="chat-icon-wrap">💬</div>
                 <div>
                     <h2>Discussion groupe <?php echo htmlspecialchars($groupe_libelle); ?></h2>
                     <p><?php echo $nb_membres; ?> donneur<?php echo $nb_membres > 1 ? 's' : ''; ?> dans ce groupe</p>
@@ -353,7 +332,7 @@ $page_active = 'chat';
             <span class="chat-badge-groupe"><?php echo htmlspecialchars($groupe_libelle); ?></span>
         </div>
 
-        <!-- Fenêtre de chat -->
+        <!-- ══ Fenêtre de chat ══ -->
         <div class="chat-window">
             <div class="chat-messages" id="chat-messages">
                 <?php if (!$messages): ?>
@@ -368,7 +347,7 @@ $page_active = 'chat';
                         $cit     = $citoyens_by_nni[$m['NNI']] ?? null;
                         $nom_aff = $cit ? ($cit['prenom'] . ' ' . $cit['nom']) : ('Donneur ' . substr($m['NNI'], -4));
                         $init    = $cit ? initiales($cit['prenom'], $cit['nom']) : '?';
-                        $couleur = $is_mine ? '#8b1717' : couleur_avatar($m['NNI']);
+                        $couleur = $is_mine ? '#8B0000' : couleur_avatar($m['NNI']);
                     ?>
                     <div class="chat-msg <?php echo $is_mine ? 'mine' : ''; ?>">
                         <div class="chat-avatar" style="background: <?php echo $couleur; ?>;"><?php echo $init; ?></div>
@@ -384,7 +363,7 @@ $page_active = 'chat';
                 <?php endif; ?>
             </div>
 
-            <!-- Formulaire d'envoi -->
+            <!-- ══ Formulaire d'envoi ══ -->
             <form method="POST" class="chat-form" id="chat-form">
                 <textarea
                     id="msg-input"
@@ -421,15 +400,14 @@ $page_active = 'chat';
                 if (input.value.trim() !== '') form.submit();
             }
         });
-
-        // Auto-redimensionnement de la zone de texte
+        // Auto-redimensionnement
         input.addEventListener('input', () => {
             input.style.height = 'auto';
             input.style.height = Math.min(input.scrollHeight, 140) + 'px';
         });
     }
 
-    // Rafraîchissement auto toutes les 8 s — UNIQUEMENT si l'utilisateur n'écrit pas
+    // Rafraîchissement auto toutes les 8s (sauf si l'utilisateur écrit)
     setInterval(() => {
         const isTyping = input && (document.activeElement === input || input.value.trim() !== '');
         if (!isTyping) window.location.reload();

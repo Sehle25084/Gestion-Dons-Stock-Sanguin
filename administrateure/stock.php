@@ -66,14 +66,18 @@ if ($filtre_etablissement !== 'sous_banques') {
 
 if ($filtre_etablissement !== 'banques') {
     foreach ($stocks_sb as $s) {
-        $critique = $s['quantite_disponible'] <= 2; // pas de seuil_alerte sur stock_sous_banque
+        // ✔ CORRECTION : la colonne `seuil_alerte` EXISTE bien dans stock_sous_banque
+        //   Avant : hardcodé à 2 → si une sous-banque avait fixé son seuil à 10, l'admin
+        //           ne voyait l'alerte qu'à partir de 2 pochettes (trop tard !)
+        $seuil_sb = (float)($s['seuil_alerte'] ?? 5);
+        $critique = $s['quantite_disponible'] <= $seuil_sb;
         $lignes[] = [
             'type'        => 'sous_banque',
             'etabl_nom'   => $s['nom_sous_banque'],
             'etabl_extra' => $s['nom_hopital'] ?? '',
             'groupe'      => $s['groupe'],
             'quantite'    => (float)$s['quantite_disponible'],
-            'seuil'       => 2,
+            'seuil'       => $seuil_sb,
             'date_maj'    => $s['date_mise_a_jour'],
             'date_exp'    => null,
             'critique'    => $critique,
@@ -108,7 +112,8 @@ foreach ($stocks_banques as $s) {
 }
 foreach ($stocks_sb as $s) {
     $qte_sb += (float)$s['quantite_disponible'];
-    if ($s['quantite_disponible'] <= 2) $nb_critiques++;
+    // ✔ CORRECTION : utiliser le vrai seuil_alerte de la sous-banque (au lieu de 2 hardcodé)
+    if ($s['quantite_disponible'] <= ($s['seuil_alerte'] ?? 5)) $nb_critiques++;
 }
 
 $qte_totale = $qte_banques + $qte_sb;
@@ -203,7 +208,7 @@ require_once '_style.php';
         /* ── Vue par groupe sanguin ── */
         .groupes-grid {
             display: grid;
-            grid-template-columns: repeat(8, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
             gap: 12px;
             margin-bottom: 28px;
         }
@@ -251,9 +256,8 @@ require_once '_style.php';
             letter-spacing: 0.4px;
         }
 
-        @media (max-width: 1100px) {
-            .groupes-grid { grid-template-columns: repeat(4, 1fr); }
-        }
+        /* Note : auto-fit s'occupe automatiquement de la responsivité,
+           plus besoin de media query pour la grille des groupes */
 
         /* Badges */
         .badge-banque {

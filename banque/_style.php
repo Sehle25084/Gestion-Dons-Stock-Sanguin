@@ -1,7 +1,7 @@
 <?php
 // ════════════════════════════════════════════════════
-// E-SANG — Styles partagés ADMIN
-// Inclure AVANT sidebar.php dans chaque page admin
+// E-SANG — Styles partagés BANQUE
+// Inclure AVANT sidebar.php dans chaque page banque
 // Usage : require_once '_style.php'; puis utiliser $shared_css
 // ════════════════════════════════════════════════════
 $shared_css = <<<'CSS'
@@ -109,10 +109,8 @@ body {
 .main-content {
     margin-left: 270px;
     flex: 1;
-    min-width: 0;          /* ✔ Essentiel : permet à flex de ne pas déborder */
     padding: 40px 48px;
     min-height: 100vh;
-    overflow-x: hidden;    /* ✔ Garantit que rien ne dépasse en horizontal */
 }
 
 /* ── Bandeau "Admin connecté" en haut de page ── */
@@ -196,7 +194,7 @@ body {
    ══════════════════════════════════════ */
 .stats {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: repeat(4, 1fr);
     gap: 22px;
     margin-bottom: 40px;
 }
@@ -300,9 +298,7 @@ body {
 .table-wrapper {
     border: 2px solid #E5E7EB;
     border-radius: 14px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    -webkit-overflow-scrolling: touch;
+    overflow: hidden;
 }
 
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -593,7 +589,7 @@ table tbody tr:hover td { background: #FAFAFA; }
    ══════════════════════════════════════ */
 .stats-compact {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: repeat(4, 1fr);
     gap: 16px;
     margin-bottom: 28px;
 }

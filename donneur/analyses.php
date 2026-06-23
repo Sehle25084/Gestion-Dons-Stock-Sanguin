@@ -2,7 +2,6 @@
 session_start();
 require_once '../config/db.php';
 
-// ── Vérification session ──────────────────────────────────────────────────────
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'donneur') {
     header("Location: ../index.php");
     exit;
@@ -10,7 +9,7 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'donneur') {
 
 $id_donneur = $_SESSION['id'];
 
-// ── Données du donneur ────────────────────────────────────────────────────────
+// ── Données du donneur ──
 $stmt = $pdo->prepare("SELECT * FROM donneur WHERE id_donneur = ?");
 $stmt->execute([$id_donneur]);
 $donneur = $stmt->fetch();
@@ -19,17 +18,7 @@ $stmt = $pdo_registre->prepare("SELECT * FROM citoyen WHERE NNI = ?");
 $stmt->execute([$donneur['NNI']]);
 $citoyen = $stmt->fetch();
 
-// ── Groupe sanguin ────────────────────────────────────────────────────────────
-$groupe = "Non confirmé";
-if ($donneur['id_groupe']) {
-    $stmt = $pdo->prepare("SELECT libelle FROM groupe_sanguin WHERE id_groupe = ?");
-    $stmt->execute([$donneur['id_groupe']]);
-    $g = $stmt->fetch();
-    if ($g) $groupe = $g['libelle'];
-}
-
-// ── Toutes les analyses liées aux dons du donneur ────────────────────────────
-// On joint don → analyse (résultats après chaque don) + banque + groupe sanguin
+// ── Analyses du donneur ──
 $stmt = $pdo->prepare("
     SELECT
         a.id_analyse,
@@ -37,7 +26,7 @@ $stmt = $pdo->prepare("
         a.hemoglobine,
         a.tension AS tension_arterielle,
         a.poids,
-        a.resultat_global AS resultat,           -- 'conforme' | 'non_conforme' | 'en_cours'
+        a.resultat_global AS resultat,
         a.note AS commentaire_medical,
         a.id_don,
         don.date_don,
@@ -46,27 +35,26 @@ $stmt = $pdo->prepare("
         b.wilaya    AS wilaya_banque,
         g.libelle   AS groupe_libelle
     FROM analyse_sang a
-    JOIN don      ON don.id_don      = a.id_don
-    JOIN banque_de_sang b ON b.id_banque = don.id_banque
-    JOIN groupe_sanguin g ON g.id_groupe  = don.id_groupe
+    JOIN don              ON don.id_don     = a.id_don
+    JOIN banque_de_sang b ON b.id_banque    = don.id_banque
+    JOIN groupe_sanguin g ON g.id_groupe    = don.id_groupe
     WHERE don.id_donneur = ?
     ORDER BY a.date_analyse DESC
 ");
 $stmt->execute([$id_donneur]);
 $analyses = $stmt->fetchAll();
 
-// ── Statistiques rapides ──────────────────────────────────────────────────────
-$nb_total   = count($analyses);
-$nb_valide  = 0;
-$nb_invalide = 0;
-$nb_attente = 0;
+// ── Stats ──
+$nb_total = count($analyses);
+$nb_valide = 0; $nb_invalide = 0; $nb_pending = 0;
 foreach ($analyses as $a) {
-    if ($a['resultat'] === 'conforme')    $nb_valide++;
-    elseif ($a['resultat'] === 'non_conforme') $nb_invalide++;
-    else $nb_attente++;
+    if      ($a['resultat'] === 'conforme')     $nb_valide++;
+    elseif  ($a['resultat'] === 'non_conforme') $nb_invalide++;
+    else                                        $nb_pending++;
 }
 
 $page_active = 'analyses';
+require_once '_style.php';
 ?>
 <!DOCTYPE html>
 <html lang="fr">
@@ -74,195 +62,191 @@ $page_active = 'analyses';
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mes analyses — E-Sang Donneur</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <?php include 'sidebar.php'; ?>
-
     <style>
-        /* ── Résultat badge ───────────────────────────────────────────── */
-        .badge-valide   { background:#F0FDF4; color:#166534; border:2px solid #BBF7D0; }
-        .badge-invalide { background:#FEF2F2; color:#8B0000; border:2px solid #FCA5A5; }
-        .badge-pending  { background:#FFF7ED; color:#C2410C; border:2px solid #FED7AA; }
+        <?php echo $shared_css; ?>
 
-        /* ── Cartes d'analyse ─────────────────────────────────────────── */
-        .analyse-list { display:flex; flex-direction:column; gap:18px; }
+        /* ── Cartes d'analyses ── */
+        .analyse-list { display: flex; flex-direction: column; gap: 16px; }
 
         .analyse-card {
-            background:#FFFFFF;
-            border:2px solid #E5E7EB;
-            border-radius:16px;
-            padding:24px 28px;
-            transition:all .2s ease;
+            background: #FFFFFF;
+            border: 1.5px solid #E5E7EB;
+            border-radius: 14px;
+            padding: 22px 26px;
+            transition: all 0.2s;
         }
         .analyse-card:hover {
-            border-color:#8B0000;
-            box-shadow:0 8px 20px -6px rgba(139,0,0,.1);
+            border-color: #8B0000;
+            box-shadow: 0 6px 14px -4px rgba(139,0,0,0.08);
         }
-        .analyse-card.valide   { border-left:5px solid #16A34A; }
-        .analyse-card.invalide { border-left:5px solid #8B0000; }
-        .analyse-card.en_attente { border-left:5px solid #EA580C; }
+        .analyse-card.valide   { border-left: 4px solid #16A34A; }
+        .analyse-card.invalide { border-left: 4px solid #DC2626; }
+        .analyse-card.pending  { border-left: 4px solid #EA580C; }
 
-        /* En-tête de carte */
         .analyse-header {
-            display:flex; align-items:center;
-            justify-content:space-between;
-            flex-wrap:wrap; gap:12px;
-            margin-bottom:18px;
-            padding-bottom:14px;
-            border-bottom:2px solid #F3F4F6;
+            display: flex; align-items: center; justify-content: space-between;
+            flex-wrap: wrap; gap: 12px;
+            margin-bottom: 18px;
+            padding-bottom: 14px;
+            border-bottom: 1.5px solid #F3F4F6;
         }
-        .analyse-header-left { display:flex; align-items:center; gap:14px; }
+        .analyse-header-left { display: flex; align-items: center; gap: 14px; }
 
         .analyse-icon {
-            width:48px; height:48px; border-radius:12px;
-            background:#FEF2F2;
-            display:flex; align-items:center; justify-content:center;
-            font-size:22px; flex-shrink:0;
-            border:2px solid #FCA5A5;
+            width: 46px; height: 46px;
+            border-radius: 12px;
+            background: #FEF2F2;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 22px; flex-shrink: 0;
+            border: 1.5px solid #FCA5A5;
         }
 
-        .analyse-title { font-size:16px; font-weight:800; color:#111111; margin-bottom:3px; }
-        .analyse-sub   { font-size:12px; color:#6B7280; font-weight:500; }
+        .analyse-title { font-size: 15px; font-weight: 800; color: #111111; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .analyse-sub   { font-size: 12px; color: #6B7280; font-weight: 500; }
 
-        /* Grille de métriques */
         .analyse-metrics {
-            display:grid;
-            grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));
-            gap:14px;
-            margin-bottom:18px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 12px;
+            margin-bottom: 14px;
         }
         .metric-box {
-            background:#F9FAFB;
-            border:1.5px solid #E5E7EB;
-            border-radius:12px;
-            padding:14px 16px;
+            background: #F9FAFB;
+            border: 1.5px solid #E5E7EB;
+            border-radius: 10px;
+            padding: 12px 14px;
         }
         .metric-label {
-            font-size:10px; font-weight:800; color:#6B7280;
-            text-transform:uppercase; letter-spacing:.06em;
-            margin-bottom:6px;
+            font-size: 10px; font-weight: 800; color: #6B7280;
+            text-transform: uppercase; letter-spacing: 0.06em;
+            margin-bottom: 6px;
         }
         .metric-value {
-            font-size:22px; font-weight:800; color:#111111;
-            line-height:1; letter-spacing:-1px;
+            font-size: 19px; font-weight: 800; color: #111111;
+            line-height: 1;
         }
         .metric-unit {
-            font-size:11px; font-weight:600; color:#9CA3AF;
-            margin-left:3px;
+            font-size: 11px; font-weight: 600; color: #9CA3AF;
+            margin-left: 3px;
         }
-        .metric-na { font-size:14px; font-weight:600; color:#D1D5DB; }
+        .metric-na { font-size: 14px; font-weight: 600; color: #D1D5DB; }
 
-        /* Commentaire médical */
         .commentaire-block {
-            background:#FFFBEB;
-            border:1.5px solid #FCD34D;
-            border-radius:12px;
-            padding:14px 18px;
-            margin-top:4px;
+            background: #FFFBEB;
+            border: 1.5px solid #FCD34D;
+            border-radius: 10px;
+            padding: 12px 16px;
+            margin-top: 4px;
         }
         .commentaire-label {
-            font-size:10px; font-weight:800; color:#92400E;
-            text-transform:uppercase; letter-spacing:.06em;
-            margin-bottom:6px;
-            display:flex; align-items:center; gap:6px;
+            font-size: 11px; font-weight: 800; color: #92400E;
+            text-transform: uppercase; letter-spacing: 0.06em;
+            margin-bottom: 6px;
         }
         .commentaire-text {
-            font-size:13px; color:#78350F; font-weight:500; line-height:1.55;
+            font-size: 13px; color: #78350F; line-height: 1.5;
         }
 
-        /* État vide */
-        .vide-analyses {
-            text-align:center; padding:64px 40px;
-            color:#9CA3AF; font-size:14px; font-weight:500;
-        }
-        .vide-analyses .vide-icon { font-size:48px; margin-bottom:14px; }
-        .vide-analyses strong { display:block; font-size:16px; color:#374151; font-weight:700; margin-bottom:6px; }
+        .badge-valide   { background: #DCFCE7; color: #166534; }
+        .badge-invalide { background: #FEE2E2; color: #B91C1C; }
+        .badge-pending  { background: #FEF3C7; color: #92400E; }
 
-        /* Responsive */
-        @media(max-width:640px){
-            .analyse-metrics { grid-template-columns:repeat(2,1fr); }
-            .analyse-header  { flex-direction:column; align-items:flex-start; }
+        @media (max-width: 640px) {
+            .analyse-metrics { grid-template-columns: repeat(2, 1fr); }
+            .analyse-header  { flex-direction: column; align-items: flex-start; }
         }
     </style>
 </head>
 <body>
 
+<?php require_once 'sidebar.php'; ?>
+
 <div class="main-content">
 
-    <!-- ── En-tête ──────────────────────────────────────────────────────────── -->
-    <div class="page-header">
-        <h1>Mes analyses</h1>
-        <p>Résultats médicaux après chaque don de sang</p>
+    <!-- ══ TOP-BAR ══ -->
+    <div class="top-bar">
+        <div class="top-bar-user">
+            <div class="top-bar-avatar"><?php echo $donneur_initials; ?></div>
+            <div class="top-bar-info">
+                <div class="top-bar-name">Bonjour, <?php echo $donneur_display; ?></div>
+                <div class="top-bar-role">Espace donneur</div>
+            </div>
+        </div>
     </div>
 
-    <!-- ── Alerte groupe non confirmé ────────────────────────────────────────── -->
+    <!-- ══ TITRE ══ -->
+    <div class="page-header">
+        <h1>Mes analyses</h1>
+        <p>Résultats médicaux après chaque don de sang.</p>
+    </div>
+
     <?php if (!$donneur['id_groupe']): ?>
-    <div class="alerte-warning">
-        ⚠️ Votre groupe sanguin n'est pas encore confirmé. Présentez-vous à une banque de sang pour votre première analyse.
+    <div class="alerte-info" style="background: #FEF3C7; border-color: #FCD34D;">
+        <span>⚠️ Votre groupe sanguin n'est pas encore confirmé. Présentez-vous à une banque de sang pour votre première analyse.</span>
     </div>
     <?php endif; ?>
 
-    <!-- ── Cartes statistiques ───────────────────────────────────────────────── -->
-    <div class="stats stats-4">
-        <div class="stat-card c1">
-            <div class="stat-card-header">
-                <span class="stat-label">Total analyses</span>
-                <span class="stat-icon ic-red">🔬</span>
+    <!-- ══ STATS COMPACTES ══ -->
+    <div class="stats-compact">
+        <div class="stat-mini">
+            <div class="stat-mini-icon ic-red">🔬</div>
+            <div class="stat-mini-content">
+                <div class="stat-mini-label">Total analyses</div>
+                <div class="stat-mini-number"><?php echo $nb_total; ?></div>
             </div>
-            <span class="stat-number"><?php echo $nb_total; ?></span>
         </div>
-        <div class="stat-card c2">
-            <div class="stat-card-header">
-                <span class="stat-label">Validées</span>
-                <span class="stat-icon ic-grn">✅</span>
+        <div class="stat-mini">
+            <div class="stat-mini-icon ic-grn">✅</div>
+            <div class="stat-mini-content">
+                <div class="stat-mini-label">Validées</div>
+                <div class="stat-mini-number"><?php echo $nb_valide; ?></div>
             </div>
-            <span class="stat-number"><?php echo $nb_valide; ?></span>
         </div>
-        <div class="stat-card c3">
-            <div class="stat-card-header">
-                <span class="stat-label">Invalidées</span>
-                <span class="stat-icon ic-red">❌</span>
+        <div class="stat-mini">
+            <div class="stat-mini-icon ic-red">❌</div>
+            <div class="stat-mini-content">
+                <div class="stat-mini-label">Invalidées</div>
+                <div class="stat-mini-number"><?php echo $nb_invalide; ?></div>
             </div>
-            <span class="stat-number"><?php echo $nb_invalide; ?></span>
         </div>
-        <div class="stat-card c4">
-            <div class="stat-card-header">
-                <span class="stat-label">En attente</span>
-                <span class="stat-icon ic-org">⏳</span>
+        <div class="stat-mini">
+            <div class="stat-mini-icon ic-org">⏳</div>
+            <div class="stat-mini-content">
+                <div class="stat-mini-label">En attente</div>
+                <div class="stat-mini-number <?php echo $nb_pending > 0 ? 'alert' : ''; ?>"><?php echo $nb_pending; ?></div>
             </div>
-            <span class="stat-number"><?php echo $nb_attente; ?></span>
         </div>
     </div>
 
-    <!-- ── Liste des analyses ─────────────────────────────────────────────────── -->
+    <!-- ══ LISTE DES ANALYSES ══ -->
     <div class="section">
         <div class="section-header">
             <div class="section-title">Historique des résultats</div>
+            <span class="cnt-badge"><?php echo $nb_total; ?> analyse(s)</span>
         </div>
 
         <?php if ($analyses): ?>
         <div class="analyse-list">
             <?php foreach ($analyses as $a):
-                $statut_class = ($a['resultat'] === 'conforme') ? 'valide' :
-                                (($a['resultat'] === 'non_conforme') ? 'invalide' : 'en_attente');
-                $badge_class  = ($a['resultat'] === 'conforme') ? 'badge-valide' :
+                $statut_class = ($a['resultat'] === 'conforme')     ? 'valide'  :
+                                (($a['resultat'] === 'non_conforme') ? 'invalide' : 'pending');
+                $badge_class  = ($a['resultat'] === 'conforme')     ? 'badge-valide' :
                                 (($a['resultat'] === 'non_conforme') ? 'badge-invalide' : 'badge-pending');
-                $label_res    = ($a['resultat'] === 'conforme') ? '✔ Conforme' :
+                $label_res    = ($a['resultat'] === 'conforme')     ? '✓ Conforme'      :
                                 (($a['resultat'] === 'non_conforme') ? '✘ Non conforme' : '⏳ En cours');
             ?>
             <div class="analyse-card <?php echo $statut_class; ?>">
 
-                <!-- En-tête de la carte -->
                 <div class="analyse-header">
                     <div class="analyse-header-left">
                         <div class="analyse-icon">🩸</div>
                         <div>
                             <div class="analyse-title">
                                 Don du <?php echo date('d/m/Y', strtotime($a['date_don'])); ?>
-                                &nbsp;·&nbsp;
                                 <span class="badge badge-groupe"><?php echo htmlspecialchars($a['groupe_libelle']); ?></span>
                             </div>
                             <div class="analyse-sub">
-                                📍 <?php echo htmlspecialchars($a['nom_banque']); ?>, <?php echo htmlspecialchars($a['wilaya_banque']); ?>
+                                📍 <?php echo htmlspecialchars($a['nom_banque']); ?><?php echo $a['wilaya_banque'] ? ', ' . htmlspecialchars($a['wilaya_banque']) : ''; ?>
                                 &nbsp;·&nbsp; Analysé le <?php echo date('d/m/Y', strtotime($a['date_analyse'])); ?>
                             </div>
                         </div>
@@ -270,9 +254,7 @@ $page_active = 'analyses';
                     <span class="badge <?php echo $badge_class; ?>"><?php echo $label_res; ?></span>
                 </div>
 
-                <!-- Métriques médicales -->
                 <div class="analyse-metrics">
-
                     <div class="metric-box">
                         <div class="metric-label">Hémoglobine</div>
                         <?php if ($a['hemoglobine']): ?>
@@ -285,7 +267,7 @@ $page_active = 'analyses';
                     <div class="metric-box">
                         <div class="metric-label">Tension artérielle</div>
                         <?php if ($a['tension_arterielle']): ?>
-                            <div class="metric-value" style="font-size:17px;"><?php echo htmlspecialchars($a['tension_arterielle']); ?><span class="metric-unit">mmHg</span></div>
+                            <div class="metric-value" style="font-size:15px;"><?php echo htmlspecialchars($a['tension_arterielle']); ?><span class="metric-unit">mmHg</span></div>
                         <?php else: ?>
                             <div class="metric-na">—</div>
                         <?php endif; ?>
@@ -304,18 +286,11 @@ $page_active = 'analyses';
                         <div class="metric-label">Quantité don</div>
                         <div class="metric-value"><?php echo (int)$a['quantite']; ?><span class="metric-unit">poch.</span></div>
                     </div>
-
                 </div>
 
-                <!-- Commentaire médical -->
                 <?php if (!empty($a['commentaire_medical'])): ?>
                 <div class="commentaire-block">
-                    <div class="commentaire-label">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#92400E" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                        </svg>
-                        Commentaire médical
-                    </div>
+                    <div class="commentaire-label">💬 Commentaire médical</div>
                     <div class="commentaire-text"><?php echo nl2br(htmlspecialchars($a['commentaire_medical'])); ?></div>
                 </div>
                 <?php endif; ?>
@@ -325,13 +300,11 @@ $page_active = 'analyses';
         </div>
 
         <?php else: ?>
-        <div class="vide-analyses">
-            <div class="vide-icon">🔬</div>
-            <strong>Aucune analyse disponible</strong>
-            Vos résultats d'analyse apparaîtront ici après chaque don de sang.
+        <div class="vide" style="padding: 50px 20px; text-align: center;">
+            🔬 <strong>Aucune analyse disponible</strong><br>
+            <small>Vos résultats d'analyse apparaîtront ici après chaque don de sang.</small>
         </div>
         <?php endif; ?>
-
     </div>
 
 </div>

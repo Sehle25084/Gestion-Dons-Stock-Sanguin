@@ -7,75 +7,107 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'sous_banque') {
     exit;
 }
 
-$id_sb = $_SESSION['id_sous_banque'];
+$id_sb   = $_SESSION['id_sous_banque'];
+$success = $erreur = "";
 
-// ── Filtres ──
-$filtre_type   = isset($_GET['type'])   ? trim($_GET['type'])   : '';
-$filtre_groupe = isset($_GET['groupe']) ? (int)$_GET['groupe']  : 0;
-$filtre_debut  = isset($_GET['debut'])  ? trim($_GET['debut'])  : '';
-$filtre_fin    = isset($_GET['fin'])    ? trim($_GET['fin'])    : '';
+// ════════════════════════════════════════════════════════════════
+// TRAITEMENT : Marquer un lot comme expiré
+// ════════════════════════════════════════════════════════════════
+if (isset($_POST['marquer_expire'])) {
+    $id_lot = (int)($_POST['id_lot'] ?? 0);
 
-// ── Types d'actions ──
-$types_disponibles = [
-    'entree_stock'          => ['label' => 'Entrée de stock',        'icon' => '📥', 'cls' => 'type-entree'],
-    'sortie_stock'          => ['label' => 'Sortie de stock',        'icon' => '📤', 'cls' => 'type-sortie'],
-    'lot_expire'            => ['label' => 'Lot expiré',             'icon' => '🗑️', 'cls' => 'type-expire'],
-    'seuil_modifie'         => ['label' => 'Seuil modifié',          'icon' => '✏️', 'cls' => 'type-seuil'],
-    'alerte_declenchee'     => ['label' => 'Alerte déclenchée',      'icon' => '🔔', 'cls' => 'type-alerte'],
-    'alerte_traitee'        => ['label' => 'Alerte traitée',         'icon' => '✅', 'cls' => 'type-ok'],
-    'demande_envoyee'       => ['label' => 'Demande envoyée',        'icon' => '📨', 'cls' => 'type-demande'],
-    'demande_recue_traitee' => ['label' => 'Demande hôpital traitée','icon' => '🏥', 'cls' => 'type-demande'],
-];
+    $stmt = $pdo->prepare("SELECT * FROM lot_sang_sous_banque WHERE id_lot = ? AND id_sous_banque = ?");
+    $stmt->execute([$id_lot, $id_sb]);
+    $lot = $stmt->fetch();
 
-// ── Construction dynamique de la requête ──
-$sql = "
-    SELECT h.*, g.libelle AS groupe
-    FROM historique_sous_banque h
-    LEFT JOIN groupe_sanguin g ON g.id_groupe = h.id_groupe
-    WHERE h.id_sous_banque = ?
-";
+    if (!$lot) {
+        $erreur = "Lot introuvable.";
+    } elseif ($lot['statut'] !== 'disponible') {
+        $erreur = "Ce lot a déjà été traité.";
+    } else {
+        $pdo->beginTransaction();
+        try {
+            // 1. Marquer le lot comme expiré
+            $pdo->prepare("UPDATE lot_sang_sous_banque SET statut = 'expire' WHERE id_lot = ?")
+                ->execute([$id_lot]);
+
+            // 2. Retirer la quantité du stock_sous_banque
+            $pdo->prepare("
+                UPDATE stock_sous_banque
+                SET quantite_disponible = GREATEST(0, quantite_disponible - ?),
+                    date_mise_a_jour = CURDATE()
+                WHERE id_sous_banque = ? AND id_groupe = ?
+            ")->execute([$lot['quantite'], $id_sb, $lot['id_groupe']]);
+
+            // 3. Tracer dans l'historique
+            $stmtG = $pdo->prepare("SELECT libelle FROM groupe_sanguin WHERE id_groupe = ?");
+            $stmtG->execute([$lot['id_groupe']]);
+            $libelle_groupe = $stmtG->fetchColumn();
+
+            $pdo->prepare("
+                INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, date_action)
+                VALUES (?, ?, 'lot_expire', ?, ?, NOW())
+            ")->execute([
+                $id_sb, $lot['id_groupe'], $lot['quantite'],
+                "Lot de {$lot['quantite']} pochette(s) {$libelle_groupe} retiré du stock (expiré)"
+            ]);
+
+            $pdo->commit();
+            $success = "Lot marqué comme expiré et retiré du stock.";
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            $erreur = "Erreur lors du traitement du lot.";
+        }
+    }
+}
+
+// ── Filtre par statut ──
+$filtre_statut = $_GET['statut'] ?? 'disponible';
+$where_filtre = "";
 $params = [$id_sb];
 
-if ($filtre_type !== '' && isset($types_disponibles[$filtre_type])) {
-    $sql .= " AND h.type_action = ?";
-    $params[] = $filtre_type;
-}
-if ($filtre_groupe > 0) {
-    $sql .= " AND h.id_groupe = ?";
-    $params[] = $filtre_groupe;
-}
-if ($filtre_debut !== '') {
-    $sql .= " AND h.date_action >= ?";
-    $params[] = $filtre_debut . " 00:00:00";
-}
-if ($filtre_fin !== '') {
-    $sql .= " AND h.date_action <= ?";
-    $params[] = $filtre_fin . " 23:59:59";
+if (in_array($filtre_statut, ['disponible', 'expire', 'epuise'])) {
+    $where_filtre = " AND l.statut = ?";
+    $params[] = $filtre_statut;
 }
 
-$sql .= " ORDER BY h.date_action DESC LIMIT 200";
-
-$stmt = $pdo->prepare($sql);
+// ── Chargement des lots ──
+$stmt = $pdo->prepare("
+    SELECT l.*, g.libelle AS groupe,
+           DATEDIFF(l.date_expiration, CURDATE()) AS jours_restants
+    FROM lot_sang_sous_banque l
+    JOIN groupe_sanguin g ON g.id_groupe = l.id_groupe
+    WHERE l.id_sous_banque = ?
+      $where_filtre
+    ORDER BY
+        CASE l.statut WHEN 'disponible' THEN 0 WHEN 'epuise' THEN 1 ELSE 2 END,
+        l.date_expiration ASC
+");
 $stmt->execute($params);
-$evenements = $stmt->fetchAll();
+$lots = $stmt->fetchAll();
 
-// ── Stats globales (sans filtre) ──
-$stmt = $pdo->prepare("SELECT COUNT(*) FROM historique_sous_banque WHERE id_sous_banque = ?");
-$stmt->execute([$id_sb]);
-$total_evenements = (int)$stmt->fetchColumn();
+// ── Stats globales ──
+$nb_dispo  = $pdo->prepare("SELECT COUNT(*) FROM lot_sang_sous_banque WHERE id_sous_banque = ? AND statut = 'disponible'");
+$nb_dispo->execute([$id_sb]);
+$nb_dispo = (int)$nb_dispo->fetchColumn();
 
-$stmt = $pdo->prepare("SELECT COUNT(*) FROM historique_sous_banque WHERE id_sous_banque = ? AND DATE(date_action) = CURDATE()");
-$stmt->execute([$id_sb]);
-$evenements_aujourdhui = (int)$stmt->fetchColumn();
+$nb_epuise = $pdo->prepare("SELECT COUNT(*) FROM lot_sang_sous_banque WHERE id_sous_banque = ? AND statut = 'epuise'");
+$nb_epuise->execute([$id_sb]);
+$nb_epuise = (int)$nb_epuise->fetchColumn();
 
-$stmt = $pdo->prepare("SELECT COUNT(*) FROM historique_sous_banque WHERE id_sous_banque = ? AND type_action = 'lot_expire'");
-$stmt->execute([$id_sb]);
-$total_lots_expires = (int)$stmt->fetchColumn();
+$nb_expire = $pdo->prepare("SELECT COUNT(*) FROM lot_sang_sous_banque WHERE id_sous_banque = ? AND statut = 'expire'");
+$nb_expire->execute([$id_sb]);
+$nb_expire = (int)$nb_expire->fetchColumn();
 
-// ── Liste des groupes ──
-$groupes_liste = $pdo->query("SELECT id_groupe, libelle FROM groupe_sanguin ORDER BY libelle")->fetchAll();
+$nb_a_risque = $pdo->prepare("
+    SELECT COUNT(*) FROM lot_sang_sous_banque
+    WHERE id_sous_banque = ? AND statut = 'disponible'
+      AND date_expiration <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+");
+$nb_a_risque->execute([$id_sb]);
+$nb_a_risque = (int)$nb_a_risque->fetchColumn();
 
-$page_active = 'historique';
+$page_active = 'lots';
 require_once '_style.php';
 ?>
 <!DOCTYPE html>
@@ -83,78 +115,42 @@ require_once '_style.php';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Historique — <?php echo htmlspecialchars($_SESSION['nom_sb'] ?? 'Sous-banque'); ?> | E-Sang</title>
+    <title>Lots — <?php echo htmlspecialchars($_SESSION['nom_sb'] ?? 'Sous-banque'); ?> | E-Sang</title>
     <style>
         <?php echo $shared_css; ?>
 
-        /* ── Barre de filtres ── */
-        .filtres-panel {
-            background: #FFFFFF;
-            border: 1.5px solid #E5E7EB;
-            border-radius: 14px;
-            padding: 18px 22px;
-            margin-bottom: 24px;
+        /* Filtres */
+        .filtres-statut { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+        .filtre-btn {
+            background: #FFFFFF; border: 1.5px solid #E5E7EB;
+            color: #6B7280; padding: 8px 16px; border-radius: 10px;
+            font-size: 13px; font-weight: 700; text-decoration: none;
+            transition: all 0.15s;
+            display: inline-flex; align-items: center; gap: 6px;
         }
-        .filtres-row {
-            display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end;
+        .filtre-btn:hover { background: #FEF2F2; color: #8B0000; border-color: #8B0000; }
+        .filtre-btn.active { background: #8B0000; color: #FFFFFF; border-color: #8B0000; }
+        .filtre-count {
+            background: rgba(255,255,255,0.25);
+            padding: 1px 8px; border-radius: 999px;
+            font-size: 11px; font-weight: 800;
         }
-        .filtre-field {
-            display: flex; flex-direction: column; gap: 6px;
-            min-width: 160px;
-        }
-        .filtre-field label {
-            font-size: 12px; font-weight: 700; color: #111111;
-        }
-        .filtre-field select, .filtre-field input {
-            padding: 9px 12px;
-            border: 1.5px solid #E5E7EB;
-            border-radius: 8px;
-            font-size: 13px; color: #111111;
-            font-family: inherit; background: #FFFFFF;
-        }
-        .filtre-field select:focus, .filtre-field input:focus {
-            outline: none; border-color: #8B0000;
-        }
+        .filtre-btn:not(.active) .filtre-count { background: #F3F4F6; color: #6B7280; }
 
-        /* ── Timeline ── */
-        .timeline { position: relative; }
-        .timeline-item {
-            display: flex; gap: 16px;
-            padding: 14px 0;
-            border-bottom: 1px solid #F3F4F6;
+        /* Badge urgence */
+        .urgence-tag {
+            display: inline-flex; align-items: center;
+            font-weight: 700; padding: 4px 10px;
+            border-radius: 999px; font-size: 11px;
         }
-        .timeline-item:last-child { border-bottom: none; }
+        .urgence-ok        { background:#D1FAE5; color:#065F46; }
+        .urgence-attention { background:#FEF3C7; color:#92400E; }
+        .urgence-critique  { background:#FEE2E2; color:#B91C1C; }
+        .urgence-expire    { background:#6B0000; color:#FFFFFF; }
 
-        .timeline-icon {
-            width: 40px; height: 40px;
-            border-radius: 10px;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 18px;
-            flex-shrink: 0;
-            border: 1.5px solid transparent;
-        }
-        .type-entree  .timeline-icon { background: #D1FAE5; border-color: #6EE7B7; }
-        .type-sortie  .timeline-icon { background: #FEF3C7; border-color: #FCD34D; }
-        .type-expire  .timeline-icon { background: #FEE2E2; border-color: #FCA5A5; }
-        .type-seuil   .timeline-icon { background: #E0E7FF; border-color: #A5B4FC; }
-        .type-alerte  .timeline-icon { background: #FFEDD5; border-color: #FED7AA; }
-        .type-ok      .timeline-icon { background: #D1FAE5; border-color: #6EE7B7; }
-        .type-demande .timeline-icon { background: #FEF2F2; border-color: #FCA5A5; }
-
-        .timeline-content { flex: 1; min-width: 0; }
-        .timeline-desc {
-            font-size: 14px; color: #111111; font-weight: 500;
-            margin-bottom: 4px;
-            word-wrap: break-word;
-        }
-        .timeline-meta {
-            font-size: 12px; color: #6B7280;
-            display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-        }
-        .timeline-date {
-            font-size: 12px; color: #9CA3AF;
-            white-space: nowrap; flex-shrink: 0;
-        }
+        .badge-statut-dispo  { background:#D1FAE5; color:#065F46; }
+        .badge-statut-epuise { background:#F3F4F6; color:#6B7280; }
+        .badge-statut-expire { background:#7C2D12; color:#FFFFFF; }
     </style>
 </head>
 <body>
@@ -176,127 +172,131 @@ require_once '_style.php';
 
     <!-- ══ TITRE ══ -->
     <div class="page-header">
-        <h1>Historique des actions</h1>
-        <p>Traçabilité complète de toutes les opérations effectuées dans votre dépôt.</p>
+        <h1>Suivi des lots</h1>
+        <p>Gestion individuelle des lots de sang reçus et de leurs dates d'expiration.</p>
     </div>
+
+    <?php if ($success): ?><div class="alerte-success">✅ <?php echo htmlspecialchars($success); ?></div><?php endif; ?>
+    <?php if ($erreur):  ?><div class="alerte-erreur">⚠️ <?php echo htmlspecialchars($erreur);  ?></div><?php endif; ?>
 
     <!-- ══ STATS COMPACTES ══ -->
     <div class="stats-compact">
         <div class="stat-mini">
-            <div class="stat-mini-icon ic-red">📋</div>
+            <div class="stat-mini-icon ic-grn">📦</div>
             <div class="stat-mini-content">
-                <div class="stat-mini-label">Total événements</div>
-                <div class="stat-mini-number"><?php echo $total_evenements; ?></div>
+                <div class="stat-mini-label">Lots disponibles</div>
+                <div class="stat-mini-number"><?php echo $nb_dispo; ?></div>
             </div>
         </div>
         <div class="stat-mini">
-            <div class="stat-mini-icon ic-org">📅</div>
+            <div class="stat-mini-icon ic-org">⏰</div>
             <div class="stat-mini-content">
-                <div class="stat-mini-label">Aujourd'hui</div>
-                <div class="stat-mini-number"><?php echo $evenements_aujourdhui; ?></div>
+                <div class="stat-mini-label">Expirent ≤ 7 jours</div>
+                <div class="stat-mini-number <?php echo $nb_a_risque > 0 ? 'alert' : ''; ?>"><?php echo $nb_a_risque; ?></div>
             </div>
         </div>
         <div class="stat-mini">
-            <div class="stat-mini-icon ic-blu">🗑️</div>
+            <div class="stat-mini-icon ic-blu">✓</div>
             <div class="stat-mini-content">
-                <div class="stat-mini-label">Lots expirés (total)</div>
-                <div class="stat-mini-number"><?php echo $total_lots_expires; ?></div>
+                <div class="stat-mini-label">Lots épuisés</div>
+                <div class="stat-mini-number"><?php echo $nb_epuise; ?></div>
+            </div>
+        </div>
+        <div class="stat-mini">
+            <div class="stat-mini-icon ic-red">🗑️</div>
+            <div class="stat-mini-content">
+                <div class="stat-mini-label">Lots expirés</div>
+                <div class="stat-mini-number"><?php echo $nb_expire; ?></div>
             </div>
         </div>
     </div>
 
-    <!-- ══ FILTRES ══ -->
-    <div class="filtres-panel">
-        <form method="GET" action="">
-            <div class="filtres-row">
-                <div class="filtre-field">
-                    <label>Type d'action</label>
-                    <select name="type">
-                        <option value="">Tous les types</option>
-                        <?php foreach ($types_disponibles as $key => $t): ?>
-                            <option value="<?php echo $key; ?>" <?php echo $filtre_type === $key ? 'selected' : ''; ?>>
-                                <?php echo $t['icon'] . ' ' . $t['label']; ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-
-                <div class="filtre-field">
-                    <label>Groupe sanguin</label>
-                    <select name="groupe">
-                        <option value="0">Tous les groupes</option>
-                        <?php foreach ($groupes_liste as $g): ?>
-                            <option value="<?php echo $g['id_groupe']; ?>" <?php echo $filtre_groupe === (int)$g['id_groupe'] ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($g['libelle']); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-
-                <div class="filtre-field">
-                    <label>Du</label>
-                    <input type="date" name="debut" value="<?php echo htmlspecialchars($filtre_debut); ?>">
-                </div>
-
-                <div class="filtre-field">
-                    <label>Au</label>
-                    <input type="date" name="fin" value="<?php echo htmlspecialchars($filtre_fin); ?>">
-                </div>
-
-                <button type="submit" class="btn-submit" style="padding:10px 22px; width:auto; margin:0;">
-                    🔍 Filtrer
-                </button>
-                <a href="historique.php" class="btn-edit" style="text-decoration:none; padding:10px 18px;">
-                    Réinitialiser
-                </a>
-            </div>
-        </form>
-    </div>
-
-    <!-- ══ TIMELINE ══ -->
+    <!-- ══ TABLEAU + FILTRES ══ -->
     <div class="section">
         <div class="section-header">
-            <div class="section-title">Journal des événements</div>
-            <span class="cnt-badge"><?php echo count($evenements); ?> résultat<?php echo count($evenements) > 1 ? 's' : ''; ?></span>
+            <div class="section-title">Liste des lots</div>
+            <span class="cnt-badge"><?php echo count($lots); ?> lot(s) affiché(s)</span>
         </div>
 
-        <div class="timeline">
-            <?php if ($evenements): ?>
-                <?php foreach ($evenements as $e):
-                    $type_info = $types_disponibles[$e['type_action']] ?? ['label' => $e['type_action'], 'icon' => '•', 'cls' => ''];
-                ?>
-                <div class="timeline-item <?php echo $type_info['cls']; ?>">
-                    <div class="timeline-icon"><?php echo $type_info['icon']; ?></div>
-                    <div class="timeline-content">
-                        <div class="timeline-desc"><?php echo htmlspecialchars($e['description']); ?></div>
-                        <div class="timeline-meta">
-                            <strong style="color:#374151;"><?php echo $type_info['label']; ?></strong>
-                            <?php if ($e['groupe']): ?>
-                                <span>•</span>
-                                <span class="badge badge-groupe" style="font-size:11px; padding:2px 8px;"><?php echo htmlspecialchars($e['groupe']); ?></span>
-                            <?php endif; ?>
-                            <?php if ($e['quantite'] !== null): ?>
-                                <span>•</span>
-                                <span>📦 <?php echo (int)$e['quantite']; ?> poch.</span>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                    <div class="timeline-date">
-                        <strong><?php echo date('d/m/Y', strtotime($e['date_action'])); ?></strong>
-                        <br><small style="color:#9CA3AF;">à <?php echo date('H:i', strtotime($e['date_action'])); ?></small>
-                    </div>
-                </div>
-                <?php endforeach; ?>
-            <?php else: ?>
-                <div class="vide" style="padding:40px 0;">Aucun événement trouvé pour ces filtres.</div>
-            <?php endif; ?>
+        <div class="filtres-statut">
+            <a href="lots.php?statut=disponible" class="filtre-btn <?php echo ($filtre_statut === 'disponible') ? 'active' : ''; ?>">
+                📦 Disponibles <span class="filtre-count"><?php echo $nb_dispo; ?></span>
+            </a>
+            <a href="lots.php?statut=epuise" class="filtre-btn <?php echo ($filtre_statut === 'epuise') ? 'active' : ''; ?>">
+                ✓ Épuisés <span class="filtre-count"><?php echo $nb_epuise; ?></span>
+            </a>
+            <a href="lots.php?statut=expire" class="filtre-btn <?php echo ($filtre_statut === 'expire') ? 'active' : ''; ?>">
+                🗑️ Expirés <span class="filtre-count"><?php echo $nb_expire; ?></span>
+            </a>
+            <a href="lots.php?statut=tous" class="filtre-btn <?php echo ($filtre_statut === 'tous') ? 'active' : ''; ?>">
+                📋 Tous
+            </a>
         </div>
 
-        <?php if (count($evenements) === 200): ?>
-        <div style="text-align:center; padding:14px; color:#9CA3AF; font-size:12px;">
-            ⚠️ Affichage limité aux 200 derniers événements. Affinez vos filtres pour voir plus.
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Code Lot</th>
+                        <th>Groupe</th>
+                        <th>Quantité</th>
+                        <th>Date réception</th>
+                        <th>Date expiration</th>
+                        <th>Urgence</th>
+                        <th>Statut</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if ($lots): ?>
+                        <?php foreach ($lots as $l):
+                            $j = (int)$l['jours_restants'];
+                            if      ($l['statut'] !== 'disponible')  { $urg_cls='urgence-ok'; $urg_txt='—'; }
+                            elseif  ($j < 0)                          { $urg_cls='urgence-expire';   $urg_txt='⏰ Expiré'; }
+                            elseif  ($j <= 3)                         { $urg_cls='urgence-critique'; $urg_txt='🚨 ' . $j . ' jour(s)'; }
+                            elseif  ($j <= 7)                         { $urg_cls='urgence-attention'; $urg_txt='⚠️ ' . $j . ' jours'; }
+                            else                                       { $urg_cls='urgence-ok';      $urg_txt='✓ ' . $j . ' jours'; }
+                        ?>
+                        <tr>
+                            <td>
+                                <strong style="font-family:'Courier New', monospace; font-size:12px;">
+                                    <?php echo htmlspecialchars($l['code_lot'] ?? 'LOT-' . $l['id_lot']); ?>
+                                </strong>
+                            </td>
+                            <td><span class="badge badge-groupe"><?php echo htmlspecialchars($l['groupe']); ?></span></td>
+                            <td><strong><?php echo (int)$l['quantite']; ?></strong> poch.</td>
+                            <td><?php echo $l['date_reception'] ? date('d/m/Y', strtotime($l['date_reception'])) : '—'; ?></td>
+                            <td><?php echo date('d/m/Y', strtotime($l['date_expiration'])); ?></td>
+                            <td><span class="urgence-tag <?php echo $urg_cls; ?>"><?php echo $urg_txt; ?></span></td>
+                            <td>
+                                <?php if ($l['statut'] === 'disponible'): ?>
+                                    <span class="badge badge-statut-dispo">📦 Disponible</span>
+                                <?php elseif ($l['statut'] === 'epuise'): ?>
+                                    <span class="badge badge-statut-epuise">✓ Épuisé</span>
+                                <?php else: ?>
+                                    <span class="badge badge-statut-expire">🗑️ Expiré</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <?php if ($l['statut'] === 'disponible' && $j < 0): ?>
+                                    <form method="POST" style="margin:0;" onsubmit="return confirm('Marquer ce lot comme expiré et le retirer du stock ?');">
+                                        <input type="hidden" name="id_lot" value="<?php echo $l['id_lot']; ?>">
+                                        <button type="submit" name="marquer_expire" class="btn-del">
+                                            🗑️ Retirer du stock
+                                        </button>
+                                    </form>
+                                <?php else: ?>
+                                    <span style="color:#9CA3AF;font-size:12px;">—</span>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <tr><td colspan="8" class="vide">Aucun lot avec ce statut.</td></tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
         </div>
-        <?php endif; ?>
     </div>
 
 </div>

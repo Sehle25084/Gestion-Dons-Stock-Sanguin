@@ -46,7 +46,9 @@ if (isset($_GET['accepter'])) {
                 enregistrerActivite($pdo, 'banque', $id_banque,
                     'Refus automatique de la demande #' . $id_demande . ' : stock insuffisant');
 
-                $erreur = "Demande refusée : stock insuffisant.";
+                $erreur = "Demande refusée : stock insuffisant (quantité disponible dans le compteur 'stock' : "
+                    . (float)($stock['quantite_disponible'] ?? 0)
+                    . ", demandée : " . (int)$demande['quantite_demandee'] . ").";
             } else {
                 // FIFO : sortir les pochettes les plus anciennes
                 $resultatFIFO = sortirPochettesFIFO($pdo, $id_banque, $demande['id_groupe'], (int)$demande['quantite_demandee']);
@@ -56,7 +58,29 @@ if (isset($_GET['accepter'])) {
                         UPDATE demande SET statut = 'refusée', date_reponse = CURDATE()
                         WHERE id_demande = ? AND id_banque = ?
                     ")->execute([$id_demande, $id_banque]);
-                    $erreur = "Demande refusée : pochettes disponibles insuffisantes.";
+
+                    // Compter les pochettes individuelles réellement disponibles,
+                    // pour expliquer l'écart avec le compteur global "stock".
+                    $stmtNbPoch = $pdo->prepare("
+                        SELECT COUNT(*) FROM pochette
+                        WHERE id_banque = ? AND id_groupe = ? AND statut = 'disponible'
+                    ");
+                    $stmtNbPoch->execute([$id_banque, $demande['id_groupe']]);
+                    $nbPochDisponibles = (int)$stmtNbPoch->fetchColumn();
+
+                    enregistrerActivite($pdo, 'banque', $id_banque,
+                        'Refus automatique de la demande #' . $id_demande
+                        . ' : pochettes individuelles insuffisantes (table pochette = '
+                        . $nbPochDisponibles . ', table stock = ' . (float)$stock['quantite_disponible'] . ')');
+
+                    $erreur = "Demande refusée : pochettes disponibles insuffisantes. "
+                        . "Le compteur global 'stock' indique " . (float)$stock['quantite_disponible'] . " unité(s), "
+                        . "mais seulement " . $nbPochDisponibles . " pochette(s) individuelle(s) sont réellement "
+                        . "enregistrées avec le statut 'disponible' dans la table pochette (demande : "
+                        . (int)$demande['quantite_demandee'] . "). "
+                        . "Vérifiez que chaque don/pochette a bien été saisi individuellement dans pochette "
+                        . "(et pas seulement le compteur stock), ou que des pochettes n'ont pas été marquées "
+                        . "'utilisee'/'expiree'/'detruite' par erreur.";
                 } else {
                     // Accepter après FIFO réussi
                     $pdo->prepare("

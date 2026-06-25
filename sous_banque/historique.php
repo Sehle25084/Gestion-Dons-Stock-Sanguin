@@ -9,6 +9,9 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'sous_banque') {
 
 $id_sb = $_SESSION['id_sous_banque'];
 
+// Synchroniser les demandes externes acceptées par la banque (création de lot + mise à jour stock)
+require_once '_sync_demandes.php';
+
 // ── Filtres ──
 $filtre_type   = isset($_GET['type'])   ? trim($_GET['type'])   : '';
 $filtre_groupe = isset($_GET['groupe']) ? (int)$_GET['groupe']  : 0;
@@ -29,9 +32,11 @@ $types_disponibles = [
 
 // ── Construction dynamique de la requête ──
 $sql = "
-    SELECT h.*, g.libelle AS groupe
+    SELECT h.*, g.libelle AS groupe,
+           u.nom_complet AS agent_nom
     FROM historique_sous_banque h
     LEFT JOIN groupe_sanguin g ON g.id_groupe = h.id_groupe
+    LEFT JOIN utilisateur_sous_banque u ON u.id_utilisateur = h.id_utilisateur
     WHERE h.id_sous_banque = ?
 ";
 $params = [$id_sb];
@@ -278,6 +283,10 @@ require_once '_style.php';
                             <?php if ($e['quantite'] !== null): ?>
                                 <span>•</span>
                                 <span>📦 <?php echo (int)$e['quantite']; ?> poch.</span>
+                            <?php endif; ?>
+                            <?php if (!empty($e['agent_nom'])): ?>
+                                <span>•</span>
+                                <span style="color:#6B7280;">👤 <?php echo htmlspecialchars($e['agent_nom']); ?></span>
                             <?php endif; ?>
                         </div>
                     </div>

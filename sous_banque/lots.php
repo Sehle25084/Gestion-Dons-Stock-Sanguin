@@ -8,6 +8,10 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'sous_banque') {
 }
 
 $id_sb   = $_SESSION['id_sous_banque'];
+
+// Synchroniser les demandes externes acceptées par la banque (création de lot + mise à jour stock)
+require_once '_sync_demandes.php';
+$id_utilisateur_session = $_SESSION['id_utilisateur'] ?? null;
 $success = $erreur = "";
 
 // ════════════════════════════════════════════════════════════════
@@ -39,21 +43,28 @@ if (isset($_POST['marquer_expire'])) {
                 WHERE id_sous_banque = ? AND id_groupe = ?
             ")->execute([$lot['quantite'], $id_sb, $lot['id_groupe']]);
 
-            // 3. Tracer dans l'historique
+            // 3. Tracer dans mouvement_stock (sortie_perime)
+            $pdo->prepare("
+                INSERT INTO mouvement_stock (id_sous_banque, id_groupe, type_mouvement, quantite, date_mouvement, commentaire)
+                VALUES (?, ?, 'sortie_perime', ?, NOW(), CONCAT('Lot LOT-', ?, ' expiré — retiré du stock'))
+            ")->execute([$id_sb, $lot['id_groupe'], $lot['quantite'], $lot['id_lot']]);
+
+            // 4. Tracer dans l'historique
             $stmtG = $pdo->prepare("SELECT libelle FROM groupe_sanguin WHERE id_groupe = ?");
             $stmtG->execute([$lot['id_groupe']]);
             $libelle_groupe = $stmtG->fetchColumn();
 
             $pdo->prepare("
-                INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, date_action)
-                VALUES (?, ?, 'lot_expire', ?, ?, NOW())
+                INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, id_utilisateur, date_action)
+                VALUES (?, ?, 'lot_expire', ?, ?, ?, NOW())
             ")->execute([
                 $id_sb, $lot['id_groupe'], $lot['quantite'],
-                "Lot de {$lot['quantite']} pochette(s) {$libelle_groupe} retiré du stock (expiré)"
+                "Lot LOT-{$lot['id_lot']} : {$lot['quantite']} pochette(s) {$libelle_groupe} retirées du stock (péremption)",
+                $id_utilisateur_session
             ]);
 
             $pdo->commit();
-            $success = "Lot marqué comme expiré et retiré du stock.";
+            $success = "Lot LOT-{$lot['id_lot']} marqué comme expiré et retiré du stock.";
         } catch (Exception $e) {
             $pdo->rollBack();
             $erreur = "Erreur lors du traitement du lot.";
@@ -260,12 +271,12 @@ require_once '_style.php';
                         <tr>
                             <td>
                                 <strong style="font-family:'Courier New', monospace; font-size:12px;">
-                                    <?php echo htmlspecialchars($l['code_lot'] ?? 'LOT-' . $l['id_lot']); ?>
+                                    <?php echo htmlspecialchars('LOT-' . $l['id_lot']); ?>
                                 </strong>
                             </td>
                             <td><span class="badge badge-groupe"><?php echo htmlspecialchars($l['groupe']); ?></span></td>
                             <td><strong><?php echo (int)$l['quantite']; ?></strong> poch.</td>
-                            <td><?php echo $l['date_reception'] ? date('d/m/Y', strtotime($l['date_reception'])) : '—'; ?></td>
+                            <td><?php echo !empty($l['date_entree']) ? date('d/m/Y', strtotime($l['date_entree'])) : '—'; ?></td>
                             <td><?php echo date('d/m/Y', strtotime($l['date_expiration'])); ?></td>
                             <td><span class="urgence-tag <?php echo $urg_cls; ?>"><?php echo $urg_txt; ?></span></td>
                             <td>

@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Hôte : 127.0.0.1:3306
--- Généré le : mar. 23 juin 2026 à 20:55
+-- Généré le : jeu. 25 juin 2026 à 15:39
 -- Version du serveur : 8.4.7
 -- Version de PHP : 8.3.28
 
@@ -185,7 +185,7 @@ CREATE TABLE IF NOT EXISTS `don` (
   `date_don` date NOT NULL,
   `id_groupe` int NOT NULL,
   `quantite` decimal(6,2) NOT NULL,
-  `statut` enum('accepté','refusé','en_attente') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'en_attente',
+  `statut` enum('en_attente','en_analyse','accepté','refusé') COLLATE utf8mb4_unicode_ci DEFAULT 'en_attente',
   PRIMARY KEY (`id_don`),
   KEY `idx_don_donneur` (`id_donneur`),
   KEY `idx_don_banque` (`id_banque`),

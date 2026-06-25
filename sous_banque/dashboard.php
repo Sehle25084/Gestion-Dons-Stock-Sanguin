@@ -9,12 +9,16 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'sous_banque') {
 
 $id_sb = $_SESSION['id_sous_banque'];
 
+// Synchroniser les demandes externes acceptées par la banque (création de lot + mise à jour stock)
+require_once '_sync_demandes.php';
+
 // ── 1. Total général des pochettes ──
 $stmt = $pdo->prepare("SELECT COALESCE(SUM(quantite_disponible), 0) FROM stock_sous_banque WHERE id_sous_banque = ?");
 $stmt->execute([$id_sb]);
 $total_stock = (int)$stmt->fetchColumn();
 
-// ── 2. Groupes en rupture ──
+// ── 2. Groupes en rupture (TOUS les groupes sanguins, y compris ceux jamais configurés) ──
+// Un groupe jamais configuré dans stock_sous_banque a 0 pochette disponible : il EST en rupture.
 $stmt = $pdo->prepare("
     SELECT COUNT(*) FROM groupe_sanguin g
     LEFT JOIN stock_sous_banque s ON s.id_groupe = g.id_groupe AND s.id_sous_banque = ?
@@ -23,7 +27,7 @@ $stmt = $pdo->prepare("
 $stmt->execute([$id_sb]);
 $nb_rupture = (int)$stmt->fetchColumn();
 
-// ── 3. Groupes sous le seuil ──
+// ── 3. Groupes sous le seuil (TOUS les groupes, avec du stock mais en dessous du seuil) ──
 $stmt = $pdo->prepare("
     SELECT COUNT(*) FROM groupe_sanguin g
     LEFT JOIN stock_sous_banque s ON s.id_groupe = g.id_groupe AND s.id_sous_banque = ?
@@ -144,38 +148,59 @@ require_once '_style.php';
         /* ── Stock par groupe (cartes) ── */
         .groupes-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-            gap: 12px;
-            margin-top: 12px;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 10px;
+            margin-top: 14px;
         }
+        @media (max-width: 1200px) { .groupes-grid { grid-template-columns: repeat(4, 1fr); } }
+        @media (max-width: 700px)  { .groupes-grid { grid-template-columns: repeat(2, 1fr); } }
+
         .groupe-card {
             background: #FFFFFF;
             border: 1.5px solid #E5E7EB;
-            border-radius: 12px;
-            padding: 14px 16px;
+            border-radius: 16px;
+            padding: 18px 12px 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
             transition: all 0.2s;
         }
-        .groupe-card:hover { border-color: #8B0000; }
-        .groupe-card.critique { border-left: 4px solid #DC2626; }
-        .groupe-card.faible   { border-left: 4px solid #F59E0B; }
-        .groupe-card.ok       { border-left: 4px solid #16A34A; }
-        .groupe-card-header {
-            display: flex; justify-content: space-between;
-            align-items: center; margin-bottom: 8px;
-        }
-        .groupe-card-label {
-            font-size: 11px; font-weight: 800; color: #6B7280;
-            text-transform: uppercase; letter-spacing: 0.3px;
+        .groupe-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.08); transform: translateY(-2px); }
+        .groupe-card.critique { background: #FFF0F0; border-color: #FECACA; }
+        .groupe-card.faible   { background: #FFFBEB; border-color: #FDE68A; }
+        .groupe-card.ok       { background: #FFFFFF; border-color: #E5E7EB; }
+
+        .groupe-card-badge {
+            width: 44px; height: 44px;
+            background: #111111;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 12px; font-weight: 800; color: #FFFFFF;
+            letter-spacing: -0.3px;
+            flex-shrink: 0;
         }
         .groupe-card-qte {
-            font-size: 22px; font-weight: 800; color: #111111;
+            font-size: 34px;
+            font-weight: 900;
             line-height: 1;
+            color: #111111;
         }
+        .groupe-card.critique .groupe-card-qte { color: #8B0000; }
+        .groupe-card.faible   .groupe-card-qte { color: #8B0000; }
+
         .groupe-card-unit {
-            font-size: 11px; color: #9CA3AF; margin-left: 3px; font-weight: 600;
+            font-size: 10px;
+            font-weight: 700;
+            color: #9CA3AF;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: -6px;
         }
         .groupe-card-seuil {
-            font-size: 11px; color: #9CA3AF; margin-top: 4px;
+            font-size: 10px; color: #9CA3AF;
+            background: #F3F4F6; border-radius: 999px;
+            padding: 2px 8px; font-weight: 600;
         }
 
         /* ── Bandeau d'alertes ── */
@@ -280,9 +305,12 @@ require_once '_style.php';
     <div class="section">
         <div class="section-header">
             <div class="section-title">Stock par groupe sanguin</div>
-            <a href="stock.php" style="color:#8B0000; font-weight:700; text-decoration:none; font-size:13px;">
-                Voir tout →
-            </a>
+            <div style="display:flex; align-items:center; gap:12px;">
+                <span style="background:#F3F4F6; border:1.5px solid #E5E7EB; border-radius:999px; padding:4px 14px; font-size:13px; font-weight:700; color:#374151;">
+                    Total : <?php echo $total_stock; ?> pochette<?php echo $total_stock > 1 ? 's' : ''; ?>
+                </span>
+                <a href="stock.php" style="color:#8B0000; font-weight:700; text-decoration:none; font-size:13px;">Voir tout →</a>
+            </div>
         </div>
 
         <div class="groupes-grid">
@@ -294,10 +322,9 @@ require_once '_style.php';
                 else                         $cls = 'ok';
             ?>
             <div class="groupe-card <?php echo $cls; ?>">
-                <div class="groupe-card-header">
-                    <span class="badge badge-groupe"><?php echo htmlspecialchars($g['groupe']); ?></span>
-                </div>
-                <div class="groupe-card-qte"><?php echo $q; ?><span class="groupe-card-unit">poch.</span></div>
+                <div class="groupe-card-badge"><?php echo htmlspecialchars($g['groupe']); ?></div>
+                <div class="groupe-card-qte"><?php echo $q; ?></div>
+                <div class="groupe-card-unit">Pochette(s)</div>
                 <div class="groupe-card-seuil">Seuil : <?php echo $seuil; ?></div>
             </div>
             <?php endforeach; ?>
@@ -371,7 +398,7 @@ require_once '_style.php';
                                 $urgence = $j < 0 ? 'expire' : ($j <= 3 ? 'critique' : ($j <= 7 ? 'attention' : 'ok'));
                             ?>
                             <tr>
-                                <td><strong style="font-family:'Courier New', monospace; font-size:12px;"><?php echo htmlspecialchars($l['code_lot'] ?? 'LOT-' . $l['id_lot']); ?></strong></td>
+                                <td><strong style="font-family:'Courier New', monospace; font-size:12px;"><?php echo htmlspecialchars('LOT-' . $l['id_lot']); ?></strong></td>
                                 <td><span class="badge badge-groupe"><?php echo htmlspecialchars($l['groupe']); ?></span></td>
                                 <td><strong><?php echo (int)$l['quantite']; ?></strong> poch.</td>
                                 <td><?php echo date('d/m/Y', strtotime($l['date_expiration'])); ?></td>

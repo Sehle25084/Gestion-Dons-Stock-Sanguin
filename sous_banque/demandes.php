@@ -8,10 +8,29 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'sous_banque') {
     exit;
 }
 
-$id_sb                = $_SESSION['id_sous_banque'];
-$id_banque_principale = $_SESSION['id_banque_principale'];
-$id_hopital           = $_SESSION['id_hopital'];
-$success = $erreur    = "";
+$id_sb = $_SESSION['id_sous_banque'];
+$id_utilisateur_session = $_SESSION['id_utilisateur'] ?? null;
+$success = $erreur = "";
+
+// Récupération sécurisée depuis session + fallback BDD pour les variables critiques
+$id_banque_principale = $_SESSION['id_banque_principale'] ?? null;
+$id_hopital           = $_SESSION['id_hopital'] ?? null;
+
+if (!$id_banque_principale || !$id_hopital) {
+    $stmtSB = $pdo->prepare("SELECT id_hopital, id_banque_principale FROM sous_banque WHERE id_sous_banque = ?");
+    $stmtSB->execute([$id_sb]);
+    $rowSB = $stmtSB->fetch();
+    if ($rowSB) {
+        if (!$id_hopital) {
+            $id_hopital = (int)$rowSB['id_hopital'] ?: null;
+            if ($id_hopital) $_SESSION['id_hopital'] = $id_hopital;
+        }
+        if (!$id_banque_principale) {
+            $id_banque_principale = (int)$rowSB['id_banque_principale'] ?: null;
+            if ($id_banque_principale) $_SESSION['id_banque_principale'] = $id_banque_principale;
+        }
+    }
+}
 
 // ════════════════════════════════════════════════════════════════
 // HELPER : Déduction FIFO des lots
@@ -104,11 +123,12 @@ if (isset($_POST['nouvelle_demande_banque'])) {
         $libelle_groupe = $stmtG->fetchColumn();
 
         $pdo->prepare("
-            INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, date_action)
-            VALUES (?, ?, 'demande_envoyee', ?, ?, NOW())
+            INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, id_utilisateur, date_action)
+            VALUES (?, ?, 'demande_envoyee', ?, ?, ?, NOW())
         ")->execute([
             $id_sb, $id_groupe, $quantite,
-            "Demande manuelle envoyée à la banque principale : {$quantite} pochette(s) {$libelle_groupe}"
+            "Demande manuelle envoyée à la banque principale : {$quantite} pochette(s) {$libelle_groupe}",
+            $id_utilisateur_session
         ]);
 
         $success = "Demande envoyée avec succès à la banque principale ({$quantite} pochette(s) de {$libelle_groupe}).";
@@ -150,10 +170,10 @@ if (isset($_GET['traiter'])) {
                 $pdo->prepare("UPDATE stock_sous_banque SET quantite_disponible = quantite_disponible - ?, date_mise_a_jour = CURDATE() WHERE id_sous_banque = ? AND id_groupe = ?")->execute([$quantite, $id_sb, $id_groupe]);
                 $lots_suffisants = deduireLotsFIFO($pdo, $id_sb, $id_groupe, $quantite);
 
-                $pdo->prepare("INSERT INTO mouvement_stock (id_sous_banque, id_groupe, quantite, type_mouvement, date_mouvement, note) VALUES (?, ?, ?, 'sortie', NOW(), 'Demande hôpital acceptée')")->execute([$id_sb, $id_groupe, $quantite]);
+                $pdo->prepare("INSERT INTO mouvement_stock (id_sous_banque, id_groupe, quantite, type_mouvement, date_mouvement, commentaire) VALUES (?, ?, ?, 'sortie_utilisation', NOW(), 'Demande hôpital acceptée')")->execute([$id_sb, $id_groupe, $quantite]);
 
-                $pdo->prepare("INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, date_action) VALUES (?, ?, 'demande_recue_traitee', ?, ?, NOW())")
-                    ->execute([$id_sb, $id_groupe, $quantite, "Demande hôpital acceptée : {$quantite} pochette(s) {$demande['groupe']}"]);
+                $pdo->prepare("INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, id_utilisateur, date_action) VALUES (?, ?, 'demande_recue_traitee', ?, ?, ?, NOW())")
+                    ->execute([$id_sb, $id_groupe, $quantite, "Demande hôpital acceptée : {$quantite} pochette(s) {$demande['groupe']}", $id_utilisateur_session]);
 
                 $pdo->commit();
                 verifierSeuilEtAlerter($pdo, $id_sb, $id_groupe, $id_banque_principale, $id_hopital);
@@ -171,45 +191,67 @@ if (isset($_GET['traiter'])) {
             }
 
         } else {
-            // ── Refus + demande auto ──
-            $pdo->prepare("
-                UPDATE demande SET statut = 'refusée', date_reponse = CURDATE(),
-                       note = CONCAT(COALESCE(note,''), ' | Stock insuffisant (', ?, ' disponible(s))')
-                WHERE id_demande = ?
-            ")->execute([$stock_dispo, $id_demande]);
+            // ── Refus + demande auto (tout dans une transaction) ──
+            $pdo->beginTransaction();
+            try {
+                $pdo->prepare("
+                    UPDATE demande SET statut = 'refusée', date_reponse = CURDATE(),
+                           note = CONCAT(COALESCE(note,''), ' | Stock insuffisant (', ?, ' disponible(s))')
+                    WHERE id_demande = ?
+                ")->execute([$stock_dispo, $id_demande]);
 
-            $pdo->prepare("INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, date_action) VALUES (?, ?, 'demande_recue_traitee', ?, ?, NOW())")
-                ->execute([$id_sb, $id_groupe, $quantite, "Demande hôpital refusée : stock insuffisant ({$stock_dispo}/{$quantite})"]);
+                $pdo->prepare("INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, id_utilisateur, date_action) VALUES (?, ?, 'demande_recue_traitee', ?, ?, ?, NOW())")
+                    ->execute([$id_sb, $id_groupe, $quantite, "Demande hôpital refusée : stock insuffisant ({$stock_dispo}/{$quantite})", $id_utilisateur_session]);
 
-            $stmt = $pdo->prepare("SELECT COUNT(*) FROM demande WHERE id_sous_banque = ? AND id_groupe = ? AND type_demande = 'externe' AND statut = 'en_attente'");
-            $stmt->execute([$id_sb, $id_groupe]);
-            $demande_externe_existe = (int)$stmt->fetchColumn() > 0;
+                $stmt = $pdo->prepare("SELECT COUNT(*) FROM demande WHERE id_sous_banque = ? AND id_groupe = ? AND type_demande = 'externe' AND statut = 'en_attente'");
+                $stmt->execute([$id_sb, $id_groupe]);
+                $demande_externe_existe = (int)$stmt->fetchColumn() > 0;
 
-            if (!$demande_externe_existe) {
-                $qte_a_demander = max($quantite, ($demande['seuil_alerte'] ?? 5) * 2);
-                $pdo->prepare("INSERT INTO demande (id_hopital, id_sous_banque, id_banque, id_groupe, quantite_demandee, date_demande, statut, type_demande, note) VALUES (?, ?, ?, ?, ?, CURDATE(), 'en_attente', 'externe', 'Demande automatique - stock insuffisant')")
-                    ->execute([$id_hopital, $id_sb, $id_banque_principale, $id_groupe, $qte_a_demander]);
+                if (!$demande_externe_existe) {
+                    // Seuil réel depuis stock_sous_banque
+                    $stmtSeuil = $pdo->prepare("SELECT COALESCE(seuil_alerte, 5) FROM stock_sous_banque WHERE id_sous_banque = ? AND id_groupe = ?");
+                    $stmtSeuil->execute([$id_sb, $id_groupe]);
+                    $seuil_reel = (int)($stmtSeuil->fetchColumn() ?: 5);
+                    $qte_a_demander = max($quantite, $seuil_reel * 2);
 
-                $pdo->prepare("INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, date_action) VALUES (?, ?, 'demande_envoyee', ?, ?, NOW())")
-                    ->execute([$id_sb, $id_groupe, $qte_a_demander, "Demande automatique envoyée : {$qte_a_demander} pochette(s) {$demande['groupe']}"]);
+                    $pdo->prepare("INSERT INTO demande (id_hopital, id_sous_banque, id_banque, id_groupe, quantite_demandee, date_demande, statut, type_demande, note) VALUES (?, ?, ?, ?, ?, CURDATE(), 'en_attente', 'externe', 'Demande automatique - stock insuffisant')")
+                        ->execute([$id_hopital, $id_sb, $id_banque_principale, $id_groupe, $qte_a_demander]);
 
-                notifier_hopital($pdo, $id_hopital,
-                    "Demande refusée — stock insuffisant",
-                    "Votre demande de {$quantite} pochette(s) de {$demande['groupe']} a été refusée (stock : {$stock_dispo}). Une demande automatique de {$qte_a_demander} pochette(s) a été envoyée à la banque principale.",
-                    'alerte');
+                    $pdo->prepare("INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, id_utilisateur, date_action) VALUES (?, ?, 'demande_envoyee', ?, ?, ?, NOW())")
+                        ->execute([$id_sb, $id_groupe, $qte_a_demander, "Demande automatique envoyée : {$qte_a_demander} pochette(s) {$demande['groupe']}", $id_utilisateur_session]);
 
-                $success = "Stock insuffisant. Demande refusée et demande auto de <strong>$qte_a_demander</strong> pochette(s) envoyée à la banque principale.";
-            } else {
-                notifier_hopital($pdo, $id_hopital,
-                    "Demande refusée — stock insuffisant",
-                    "Votre demande de {$quantite} pochette(s) de {$demande['groupe']} a été refusée (stock : {$stock_dispo}). Une demande auprès de la banque principale est déjà en cours.",
-                    'alerte');
+                    $pdo->commit();
 
-                $success = "Stock insuffisant. Demande refusée. Une demande est déjà en cours auprès de la banque principale.";
+                    notifier_hopital($pdo, $id_hopital,
+                        "Demande refusée — stock insuffisant",
+                        "Votre demande de {$quantite} pochette(s) de {$demande['groupe']} a été refusée (stock : {$stock_dispo}). Une demande automatique de {$qte_a_demander} pochette(s) a été envoyée à la banque principale.",
+                        'alerte');
+
+                    $success = "Stock insuffisant. Demande refusée et demande auto de <strong>$qte_a_demander</strong> pochette(s) envoyée à la banque principale.";
+                } else {
+                    $pdo->commit();
+
+                    notifier_hopital($pdo, $id_hopital,
+                        "Demande refusée — stock insuffisant",
+                        "Votre demande de {$quantite} pochette(s) de {$demande['groupe']} a été refusée (stock : {$stock_dispo}). Une demande auprès de la banque principale est déjà en cours.",
+                        'alerte');
+
+                    $success = "Stock insuffisant. Demande refusée. Une demande est déjà en cours auprès de la banque principale.";
+                }
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                $erreur = "Erreur lors du traitement du refus. Veuillez réessayer.";
             }
         }
     }
 }
+
+// ════════════════════════════════════════════════════════════════
+// SYNCHRONISATION : Demandes externes acceptées → mise à jour stock
+// Logique centralisée dans _sync_demandes.php (incluse dans TOUTES
+// les pages sous_banque, pas seulement celle-ci).
+// ════════════════════════════════════════════════════════════════
+require_once '_sync_demandes.php';
 
 // ── Demandes internes reçues de l'hôpital ──
 $stmt = $pdo->prepare("
@@ -232,7 +274,7 @@ $stmt = $pdo->prepare("
     JOIN banque_de_sang b ON b.id_banque = d.id_banque
     WHERE d.id_sous_banque = ? AND d.type_demande = 'externe'
     ORDER BY d.date_demande DESC
-    LIMIT 20
+    LIMIT 50
 ");
 $stmt->execute([$id_sb]);
 $demandes_banque = $stmt->fetchAll();

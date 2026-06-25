@@ -57,6 +57,7 @@ if (isset($_POST['ajouter_don'])) {
 // ACCEPTER un don (ajout au stock + création des pochettes)
 // ════════════════════════════════════════════════════════
 if (isset($_GET['accepter'])) {
+
     $id_don = (int)$_GET['accepter'];
 
     $stmt = $pdo->prepare("SELECT * FROM don WHERE id_don = ? AND id_banque = ?");
@@ -68,50 +69,16 @@ if (isset($_GET['accepter'])) {
             $erreur = "Ce don a déjà été traité.";
         } else {
             // Marquer le don accepté
-            $pdo->prepare("UPDATE don SET statut = 'accepté' WHERE id_don = ? AND id_banque = ?")
+            $pdo->prepare("UPDATE don SET statut = 'en_analyse' WHERE id_don = ? AND id_banque = ?")
                 ->execute([$id_don, $id_banque]);
 
-            // Mettre à jour le stock
-            $stmt = $pdo->prepare("SELECT * FROM stock WHERE id_banque = ? AND id_groupe = ?");
-            $stmt->execute([$id_banque, $don['id_groupe']]);
-            $stock = $stmt->fetch();
-
-            if ($stock) {
-                $pdo->prepare("
-                    UPDATE stock
-                    SET quantite_disponible = quantite_disponible + ?,
-                        date_mise_a_jour = CURDATE()
-                    WHERE id_stock = ?
-                ")->execute([$don['quantite'], $stock['id_stock']]);
-            } else {
-                $pdo->prepare("
-                    INSERT INTO stock (id_banque, id_groupe, quantite_disponible, date_mise_a_jour, date_expiration)
-                    VALUES (?, ?, ?, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 42 DAY))
-                ")->execute([$id_banque, $don['id_groupe'], $don['quantite']]);
-            }
-
-            // Créer les pochettes individuelles (42 jours d'expiration)
-            $date_collecte   = $don['date_don'];
-            $date_expiration = date('Y-m-d', strtotime($date_collecte . ' +42 days'));
-
-            $stmtPochette = $pdo->prepare("
-                INSERT INTO pochette
-                (id_don, id_groupe, id_banque, date_collecte, date_expiration, statut, code_pochette)
-                VALUES (?, ?, ?, ?, ?, 'disponible', ?)
-            ");
-
-            for ($i = 1; $i <= (int)$don['quantite']; $i++) {
-                $code_pochette = 'POCH-' . $id_don . '-' . $i . '-' . time();
-                $stmtPochette->execute([
-                    $id_don, $don['id_groupe'], $id_banque,
-                    $date_collecte, $date_expiration, $code_pochette
-                ]);
-            }
+            
+            
 
             enregistrerActivite($pdo, 'banque', $id_banque,
-                'Acceptation du don #' . $id_don . ' (' . $don['quantite'] . ' pochette(s) créée(s))');
+                'Don #' . $id_don . ' envoyé à l’analyse');
 
-            $success = "Don accepté — " . (int)$don['quantite'] . " pochette(s) ajoutée(s) au stock !";
+            $success = "Don envoyé au laboratoire pour analyse.";
         }
     }
 }
@@ -146,7 +113,7 @@ $filtre_statut = $_GET['statut'] ?? 'tous';
 $where_filtre = "";
 $params = [$id_banque];
 
-if (in_array($filtre_statut, ['en_attente', 'accepté', 'refusé'])) {
+if (in_array($filtre_statut, ['en_attente', 'en_analyse', 'accepté', 'refusé'])) {
     $where_filtre = " AND don.statut = ?";
     $params[] = $filtre_statut;
 }
@@ -188,6 +155,14 @@ $nb_total = (int)$nb_total->fetchColumn();
 $nb_attente = $pdo->prepare("SELECT COUNT(*) FROM don WHERE id_banque = ? AND statut = 'en_attente'");
 $nb_attente->execute([$id_banque]);
 $nb_attente = (int)$nb_attente->fetchColumn();
+
+$nb_analyse = $pdo->prepare("
+    SELECT COUNT(*) 
+    FROM don 
+    WHERE id_banque = ? AND statut = 'en_analyse'
+");
+$nb_analyse->execute([$id_banque]);
+$nb_analyse = (int)$nb_analyse->fetchColumn();
 
 $nb_acceptes = $pdo->prepare("SELECT COUNT(*) FROM don WHERE id_banque = ? AND statut = 'accepté'");
 $nb_acceptes->execute([$id_banque]);
@@ -325,6 +300,13 @@ require_once '_style.php';
             <a href="dons.php?statut=en_attente" class="filtre-btn <?php echo ($filtre_statut === 'en_attente') ? 'active' : ''; ?>">
                 ⏳ En attente <span class="filtre-count"><?php echo $nb_attente; ?></span>
             </a>
+
+            <a href="dons.php?statut=en_analyse"
+   class="filtre-btn <?php echo ($filtre_statut === 'en_analyse') ? 'active' : ''; ?>">
+    🔬 En analyse
+    <span class="filtre-count"><?php echo $nb_analyse; ?></span>
+</a>
+
             <a href="dons.php?statut=accepté" class="filtre-btn <?php echo ($filtre_statut === 'accepté') ? 'active' : ''; ?>">
                 ✅ Acceptés <span class="filtre-count"><?php echo $nb_acceptes; ?></span>
             </a>
@@ -363,20 +345,26 @@ require_once '_style.php';
                             <td><?php echo date('d/m/Y', strtotime($d['date_don'])); ?></td>
                             <td>
                                 <?php if ($d['statut'] === 'en_attente'): ?>
-                                    <span class="badge badge-attente">⏳ En attente</span>
-                                <?php elseif ($d['statut'] === 'accepté'): ?>
-                                    <span class="badge badge-accepte">✅ Accepté</span>
-                                <?php else: ?>
-                                    <span class="badge badge-refuse">❌ Refusé</span>
-                                <?php endif; ?>
+    <span class="badge badge-attente">⏳ En attente</span>
+
+<?php elseif ($d['statut'] === 'en_analyse'): ?>
+    <span class="badge badge-attente">🔬 En analyse</span>
+
+<?php elseif ($d['statut'] === 'accepté'): ?>
+    <span class="badge badge-accepte">✅ Accepté</span>
+
+<?php else: ?>
+    <span class="badge badge-refuse">❌ Refusé</span>
+<?php endif; ?>
                             </td>
                             <td>
                                 <div class="actions-cell">
                                     <?php if ($d['statut'] === 'en_attente'): ?>
                                         <a href="dons.php?accepter=<?php echo $d['id_don']; ?>"
                                            class="btn-accepter"
-                                           onclick="return confirm('Accepter ce don ? Les pochettes seront créées et ajoutées au stock.')">
-                                            ✓ Accepter
+                                           onclick="return confirm('Envoyer ce don au laboratoire pour analyse ?')">
+                                           ✓ Accepter
+                                            
                                         </a>
                                         <a href="dons.php?refuser=<?php echo $d['id_don']; ?>"
                                            class="btn-refuser"

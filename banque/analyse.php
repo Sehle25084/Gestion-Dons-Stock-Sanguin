@@ -42,9 +42,9 @@ if (isset($_POST['enregistrer_analyse'])) {
 
     if (!$don) {
         $erreur = "Don introuvable.";
-    } elseif ($don['statut'] !== 'accepté') {
-        $erreur = "Ce don doit être accepté avant de pouvoir être analysé.";
-    } elseif ($deja_analyse) {
+    } elseif ($don['statut'] !== 'en_analyse') {
+    $erreur = "Ce don doit être envoyé à l'analyse avant de pouvoir être analysé.";
+} elseif ($deja_analyse) {
         $erreur = "Ce don a déjà été analysé.";
     } elseif (!$stmtGrp->fetch()) {
         $erreur = "Groupe sanguin invalide.";
@@ -70,39 +70,126 @@ if (isset($_POST['enregistrer_analyse'])) {
             ]);
 
             if ($resultat_global === 'conforme') {
-                // 2a) CONFORME → confirmer le groupe sanguin du donneur
-                $pdo->prepare("
-                    UPDATE donneur
-                    SET id_groupe = ?, groupe_confirme = 1
-                    WHERE id_donneur = ?
-                ")->execute([$id_groupe, $don['id_donneur']]);
 
+    // 1) Confirmer le groupe sanguin du donneur
+    $pdo->prepare("
+        UPDATE donneur
+        SET id_groupe = ?, groupe_confirme = 1
+        WHERE id_donneur = ?
+    ")->execute([$id_groupe, $don['id_donneur']]);
+
+    // 2) Marquer le don comme accepté après analyse
+    $pdo->prepare("
+        UPDATE don
+        SET statut = 'accepté', id_groupe = ?
+        WHERE id_don = ? AND id_banque = ?
+    ")->execute([$id_groupe, $id_don, $id_banque]);
+
+    // 3) Préparer les dates
+    $date_collecte = $don['date_don'];
+    $date_expiration = date('Y-m-d', strtotime($date_collecte . ' +30 days'));
+
+    // 4) Ajouter la quantité au stock
+    $stmtStock = $pdo->prepare("
+        SELECT * FROM stock 
+        WHERE id_banque = ? AND id_groupe = ?
+    ");
+    $stmtStock->execute([$id_banque, $id_groupe]);
+    $stock = $stmtStock->fetch();
+
+    if ($stock) {
+        $pdo->prepare("
+            UPDATE stock
+            SET quantite_disponible = quantite_disponible + ?,
+                date_mise_a_jour = CURDATE(),
+                date_expiration = ?
+            WHERE id_stock = ?
+        ")->execute([$don['quantite'], $date_expiration, $stock['id_stock']]);
+    } else {
+        $pdo->prepare("
+            INSERT INTO stock
+            (id_banque, id_groupe, quantite_disponible, date_mise_a_jour, date_expiration)
+            VALUES (?, ?, ?, CURDATE(), ?)
+        ")->execute([$id_banque, $id_groupe, $don['quantite'], $date_expiration]);
+    }
+
+    // 5) Créer les pochettes disponibles
+    $stmtPochette = $pdo->prepare("
+        INSERT INTO pochette
+        (id_don, id_groupe, id_banque, date_collecte, date_expiration, statut, code_pochette)
+        VALUES (?, ?, ?, ?, ?, 'disponible', ?)
+    ");
+
+    for ($i = 1; $i <= (int)$don['quantite']; $i++) {
+        $code_pochette = 'POCH-' . $id_don . '-' . $i . '-' . time();
+
+        $stmtPochette->execute([
+            $id_don,
+            $id_groupe,
+            $id_banque,
+            $date_collecte,
+            $date_expiration,
+            $code_pochette
+        ]);
+
+       
+
+
+    }
+
+    
                 $message_donneur = "Bonne nouvelle ! Votre don du " . date('d/m/Y', strtotime($don['date_don'])) .
                     " a été analysé et déclaré CONFORME. Merci pour votre générosité, votre don pourra être utilisé.";
             } else {
-                // 2b) NON CONFORME → détruire les pochettes liées à ce don
-                $pdo->prepare("
-                    UPDATE pochette SET statut = 'detruite'
-                    WHERE id_don = ? AND id_banque = ? AND statut = 'disponible'
-                ")->execute([$id_don, $id_banque]);
 
-                // Retirer la quantité du stock global (comme si le don n'avait jamais été accepté)
-                $stmtStock = $pdo->prepare("SELECT * FROM stock WHERE id_banque = ? AND id_groupe = ?");
-                $stmtStock->execute([$id_banque, $don['id_groupe']]);
-                $stock = $stmtStock->fetch();
+    // 1) Marquer le don comme refusé après analyse
+    $pdo->prepare("
+        UPDATE don
+        SET statut = 'refusé'
+        WHERE id_don = ? AND id_banque = ?
+    ")->execute([$id_don, $id_banque]);
 
-                if ($stock) {
-                    $nouvelle_qte = max(0, $stock['quantite_disponible'] - $don['quantite']);
-                    $pdo->prepare("
-                        UPDATE stock SET quantite_disponible = ?, date_mise_a_jour = CURDATE()
-                        WHERE id_stock = ?
-                    ")->execute([$nouvelle_qte, $stock['id_stock']]);
-                }
+    // 2) Créer les pochettes détruites
+    $date_collecte = $don['date_don'];
+    $date_expiration = date('Y-m-d', strtotime($date_collecte . ' +30 days'));
 
-                $message_donneur = "Votre don du " . date('d/m/Y', strtotime($don['date_don'])) .
-                    " a été analysé et déclaré NON CONFORME. Les pochettes concernées ont été détruites par mesure de sécurité. " .
-                    "Veuillez vous rapprocher de votre banque de sang pour plus d'informations.";
-            }
+    $stmtPochette = $pdo->prepare("
+        INSERT INTO pochette
+        (id_don, id_groupe, id_banque, date_collecte, date_expiration, statut, code_pochette)
+        VALUES (?, ?, ?, ?, ?, 'detruite', ?)
+    ");
+
+    for ($i = 1; $i <= (int)$don['quantite']; $i++) {
+        $code_pochette = 'DECHET-' . $id_don . '-' . $i . '-' . time();
+
+        $stmtPochette->execute([
+            $id_don,
+            $id_groupe,
+            $id_banque,
+            $date_collecte,
+            $date_expiration,
+            $code_pochette
+        ]);
+
+        $id_pochette = $pdo->lastInsertId();
+
+$pdo->prepare("
+    INSERT INTO poches_dechets
+    (id_pochette, raison_rejet, date_rejet)
+    VALUES (?, ?, NOW())
+")->execute([
+    $id_pochette,
+    'Analyse non conforme'
+]);
+
+    }
+
+    $message_donneur = "Votre don du " . date('d/m/Y', strtotime($don['date_don'])) .
+        " a été analysé et déclaré NON CONFORME. Les pochettes concernées ont été détruites par mesure de sécurité. " .
+        "Veuillez vous rapprocher de votre banque de sang pour plus d'informations.";
+}
+
+             
 
             // 3) Notification au donneur (table générique)
             $pdo->prepare("
@@ -134,8 +221,8 @@ $stmt = $pdo->prepare("
     LEFT JOIN donneur d ON d.id_donneur = don.id_donneur
     LEFT JOIN analyse_sang a ON a.id_don = don.id_don
     WHERE don.id_banque = ?
-      AND don.statut = 'accepté'
-      AND a.id_analyse IS NULL
+    AND don.statut = 'en_analyse'
+    AND a.id_analyse IS NULL
     ORDER BY don.date_don ASC
 ");
 $stmt->execute([$id_banque]);

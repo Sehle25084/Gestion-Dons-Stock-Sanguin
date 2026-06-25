@@ -8,6 +8,10 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'sous_banque') {
 }
 
 $id_sb               = $_SESSION['id_sous_banque'];
+
+// Synchroniser les demandes externes acceptées par la banque (création de lot + mise à jour stock)
+require_once '_sync_demandes.php';
+$id_utilisateur_session = $_SESSION['id_utilisateur'] ?? null;
 $id_banque_principale = $_SESSION['id_banque_principale'];
 $success = $erreur   = "";
 
@@ -44,12 +48,31 @@ if (isset($_POST['modifier_seuil'])) {
 
             // Tracer dans l'historique
             $pdo->prepare("
-                INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, date_action)
-                VALUES (?, ?, 'seuil_modifie', NULL, ?, NOW())
+                INSERT INTO historique_sous_banque (id_sous_banque, id_groupe, type_action, quantite, description, id_utilisateur, date_action)
+                VALUES (?, ?, 'seuil_modifie', NULL, ?, ?, NOW())
             ")->execute([
                 $id_sb, $id_groupe,
-                "Seuil d'alerte du groupe {$libelle_groupe} fixé à {$nouveau_seuil} pochette(s)"
+                "Seuil d'alerte du groupe {$libelle_groupe} fixé à {$nouveau_seuil} pochette(s)",
+                $id_utilisateur_session
             ]);
+
+            // Vérifier si le stock actuel est maintenant sous le nouveau seuil → créer alerte
+            $stmtQ = $pdo->prepare("SELECT quantite_disponible FROM stock_sous_banque WHERE id_sous_banque = ? AND id_groupe = ?");
+            $stmtQ->execute([$id_sb, $id_groupe]);
+            $qte_actuelle = (int)($stmtQ->fetchColumn() ?? 0);
+
+            if ($qte_actuelle <= $nouveau_seuil) {
+                // Vérifier qu'aucune alerte active n'existe déjà pour ce groupe
+                $stmtA = $pdo->prepare("SELECT COUNT(*) FROM alerte_stock WHERE id_sous_banque = ? AND id_groupe = ? AND traitee = 0");
+                $stmtA->execute([$id_sb, $id_groupe]);
+                if ((int)$stmtA->fetchColumn() === 0) {
+                    $type_alerte = $qte_actuelle === 0 ? 'rupture' : ($qte_actuelle <= ceil($nouveau_seuil / 2) ? 'critique' : 'avertissement');
+                    $pdo->prepare("
+                        INSERT INTO alerte_stock (id_sous_banque, id_groupe, quantite_actuelle, seuil_alerte, type_alerte, date_alerte, traitee)
+                        VALUES (?, ?, ?, ?, ?, NOW(), 0)
+                    ")->execute([$id_sb, $id_groupe, $qte_actuelle, $nouveau_seuil, $type_alerte]);
+                }
+            }
 
             $success = "Seuil d'alerte du groupe <strong>{$libelle_groupe}</strong> mis à jour à <strong>{$nouveau_seuil}</strong> pochette(s).";
         }

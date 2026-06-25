@@ -162,9 +162,7 @@ require_once '_style.php';
             <h1>Gestion du stock</h1>
             <p>Inventaire et niveaux de réserve par groupe sanguin.</p>
         </div>
-        <button class="btn-submit" onclick="ouvrirModalStock()" style="width:auto; margin-top:0; padding:11px 22px;">
-            + Ajouter du stock
-        </button>
+        
     </div>
 
     <?php if ($success): ?><div class="alerte-success">✅ <?php echo htmlspecialchars($success); ?></div><?php endif; ?>
@@ -321,20 +319,7 @@ require_once '_style.php';
     </div>
 </div>
 
-<script>
-function ouvrirModalStock() {
-    document.getElementById('modalStock').classList.add('active');
-}
-function fermerModalStock() {
-    document.getElementById('modalStock').classList.remove('active');
-}
-document.getElementById('modalStock').addEventListener('click', function(e) {
-    if (e.target === this) fermerModalStock();
-});
-document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') fermerModalStock();
-});
-</script>
+
 
 </body>
 </html>

@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Hôte : 127.0.0.1:3306
--- Généré le : jeu. 25 juin 2026 à 15:39
+-- Généré le : dim. 28 juin 2026 à 13:29
 -- Version du serveur : 8.4.7
 -- Version de PHP : 8.3.28
 
@@ -645,6 +645,7 @@ CREATE TABLE IF NOT EXISTS `utilisateur_sous_banque` (
   `login` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `mot_de_passe` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `email` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `telephone` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `statut` enum('actif','inactif') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'actif',
   PRIMARY KEY (`id_utilisateur`),
   UNIQUE KEY `uq_usb_login` (`login`),
@@ -655,8 +656,8 @@ CREATE TABLE IF NOT EXISTS `utilisateur_sous_banque` (
 -- Déchargement des données de la table `utilisateur_sous_banque`
 --
 
-INSERT INTO `utilisateur_sous_banque` (`id_utilisateur`, `id_sous_banque`, `nom_complet`, `login`, `mot_de_passe`, `email`, `statut`) VALUES
-(2, 3, 'Hayati Sbai', 'Hayati@sousbanque.mr', '$2y$10$PvohqOMLQvFxFkbBeuDh8ul8w2Cy82pthoeObogIfeFt2RadxiXFO', 'Hayati@sousbanque.mr', 'actif');
+INSERT INTO `utilisateur_sous_banque` (`id_utilisateur`, `id_sous_banque`, `nom_complet`, `login`, `mot_de_passe`, `email`, `telephone`, `statut`) VALUES
+(2, 3, 'Hayati Sbai', 'Hayati@sousbanque.mr', '$2y$10$PvohqOMLQvFxFkbBeuDh8ul8w2Cy82pthoeObogIfeFt2RadxiXFO', 'Hayati@sousbanque.mr', '+22246263630', 'actif');
 
 --
 -- Contraintes pour les tables déchargées

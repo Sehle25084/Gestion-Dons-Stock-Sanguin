@@ -84,6 +84,7 @@ if (isset($_POST['ajouter_agent'])) {
     $id_sous_banque = (int)($_POST['id_sous_banque'] ?? 0);
     $agent_nom      = trim($_POST['agent_nom']);
     $agent_email    = trim($_POST['agent_email']);
+    $agent_tel      = trim($_POST['agent_tel'] ?? '');
     $agent_pass     = $_POST['agent_pass'];
 
     if ($id_sous_banque <= 0 || empty($agent_nom) || empty($agent_email) || empty($agent_pass)) {
@@ -107,9 +108,9 @@ if (isset($_POST['ajouter_agent'])) {
                 $hash = password_hash($agent_pass, PASSWORD_DEFAULT);
                 // Note : 'login' = email (contrainte projet)
                 $pdo->prepare("
-                    INSERT INTO utilisateur_sous_banque (id_sous_banque, nom_complet, login, mot_de_passe, email, statut)
-                    VALUES (?, ?, ?, ?, ?, 'actif')
-                ")->execute([$id_sous_banque, $agent_nom, $agent_email, $hash, $agent_email]);
+                    INSERT INTO utilisateur_sous_banque (id_sous_banque, nom_complet, login, mot_de_passe, email, telephone, statut)
+                    VALUES (?, ?, ?, ?, ?, ?, 'actif')
+                ")->execute([$id_sous_banque, $agent_nom, $agent_email, $hash, $agent_email, ($agent_tel !== '' ? $agent_tel : null)]);
 
                 log_action($pdo, $id_admin_courant, "Ajout agent à $nom_sb : $agent_nom");
                 $success = "Agent <strong>" . htmlspecialchars($agent_nom) . "</strong> ajouté à <strong>" . htmlspecialchars($nom_sb) . "</strong>.";
@@ -529,6 +530,12 @@ require_once 'sidebar.php';
             </div>
 
             <div class="form-group">
+                <label>Téléphone</label>
+                <input type="text" name="agent_tel" placeholder="Ex : 22000000" maxlength="20" />
+                <small style="color:#9CA3AF; font-size:11px;">Utilisé pour la réinitialisation du mot de passe</small>
+            </div>
+
+            <div class="form-group">
                 <label>Mot de passe <span class="req">*</span></label>
                 <input type="password" name="agent_pass" required minlength="6" placeholder="Min. 6 caractères" />
             </div>
@@ -566,7 +573,7 @@ function ouvrirAgents(idSb) {
             <div class="agent-item">
                 <div class="agent-info">
                     <div class="agent-name">${escapeHtml(a.nom_complet)}<span class="${statutClass}">${statutLabel}</span></div>
-                    <div class="agent-meta">📧 ${escapeHtml(a.email || a.login)}</div>
+                    <div class="agent-meta">📧 ${escapeHtml(a.email || a.login)}${a.telephone ? ' &nbsp;·&nbsp; 📞 ' + escapeHtml(a.telephone) : ''}</div>
                 </div>
                 <a href="sous_banques.php?supprimer_agent=${a.id_utilisateur}" 
                    class="btn-del" 

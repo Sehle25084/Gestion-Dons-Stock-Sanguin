@@ -3,6 +3,10 @@ session_start();
 require_once 'config/db.php';
 
 $erreur = "";
+// ✔ Message de succès affiché après réinitialisation du mot de passe
+$succes = $_SESSION['flash_succes'] ?? '';
+unset($_SESSION['flash_succes']);
+
 // Type d'identifiant actif (NNI par défaut, conforme au document pi.docx)
 $type_actif = $_POST['type_identifiant'] ?? 'nni';
 
@@ -315,6 +319,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
             gap: 10px;
         }
 
+        /* ══ ALERTE SUCCÈS ══ */
+        .alerte-succes {
+            background: #F0FDF4;
+            border: 2px solid #86EFAC;
+            color: #166534;
+            border-radius: 12px;
+            padding: 14px 18px;
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            line-height: 1.4;
+        }
+
+        /* ══ LIEN MOT DE PASSE OUBLIÉ (sur la même ligne que le label) ══ */
+        .password-header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        .password-header .form-label {
+            margin-bottom: 0;
+        }
+        .lien-mdp-oublie {
+            font-size: 13px;
+            color: #8B0000;
+            text-decoration: none;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .lien-mdp-oublie:hover { text-decoration: underline; }
+
         /* ══ BOX FORMULAIRE ══ */
         .form-box {
             background: #FFF5F5;
@@ -527,6 +566,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
         <h2 class="form-title">Connexion</h2>
         <p class="form-subtitle">Accédez à votre espace E-Sang</p>
 
+        <?php if ($succes): ?>
+            <div class="alerte-succes">
+                ✅ <?php echo htmlspecialchars($succes); ?>
+            </div>
+        <?php endif; ?>
+
         <?php if ($erreur): ?>
             <div class="alerte-erreur">
                 ⚠️ <?php echo htmlspecialchars($erreur); ?>
@@ -570,7 +615,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifiant'])) {
 
                 <!-- Mot de passe -->
                 <div class="form-group" style="margin-bottom: 0;">
-                    <label class="form-label">Mot de passe <span class="req">*</span></label>
+                    <div class="password-header">
+                        <label class="form-label">Mot de passe <span class="req">*</span></label>
+                        <a href="mot_de_passe_oublie.php" class="lien-mdp-oublie">Mot de passe oublié ?</a>
+                    </div>
                     <div class="password-wrapper">
                         <input type="password" name="mot_de_passe" id="mot_de_passe" class="form-input"
                                placeholder="••••••••" required/>
